@@ -21,4 +21,4 @@ jobs:
           pip install pandas yfinance pandas-ta textblob requests
 
       - name: Run Update Script
-        run: python update_now.py
+        run: python discord_bot.py
