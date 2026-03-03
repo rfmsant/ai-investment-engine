@@ -1,11 +1,10 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import json
-import os
-import time
-import warnings
+import requests
+import xml.etree.ElementTree as ET
 from textblob import TextBlob
+import os, json, time, warnings
 from datetime import datetime
 from typing import Dict, List, Tuple
 from openai import OpenAI
@@ -19,14 +18,14 @@ NO_DCF_SECTORS = {"ETF", "Commodities", "FX"}
 # 1. AI GENERATION LOGIC
 # ===========================================================================
 def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str:
-    """
-    Connects to OpenAI to generate a Motley Fool style investment memo.
-    """
     try:
         client = OpenAI(api_key=api_key)
         
-        # Prepare context for the LLM
-        news_summary = "\n".join([f"- {n['headline']} ({n['label']})" for n in news[:5]])
+        # Prepare news summary safely
+        if news and len(news) > 0:
+            news_summary = "\n".join([f"- {n['headline']} ({n['label']})" for n in news[:5]])
+        else:
+            news_summary = "No recent specific news found."
         
         prompt = f"""
         Act as a senior financial analyst for 'The Motley Fool'. 
@@ -37,7 +36,6 @@ def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str
         - DCF Fair Value: ${data.get('intrinsic_value')} (Upside: {data.get('margin_of_safety')}%)
         - Growth Estimate: {data.get('growth_rate')}%
         - RSI: {data.get('RSI')}
-        - Market Sentiment Score: {data.get('Sentiment')}
         
         RECENT NEWS HEADLINES:
         {news_summary}
@@ -61,108 +59,101 @@ def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str
         return f"⚠️ Error generating AI report: {str(e)}"
 
 # ===========================================================================
-# 2. ROBUST DCF LOGIC
+# 2. ROBUST NEWS FETCHING (GOOGLE RSS)
+# ===========================================================================
+def fetch_news(ticker: str) -> List[Dict]:
+    articles = []
+    try:
+        # Use Google News RSS instead of yfinance (more reliable on Cloud)
+        url = f"https://news.google.com/rss/search?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            # Iterate through items in the RSS feed
+            for item in root.findall('./channel/item')[:5]:
+                title = item.find('title').text
+                link = item.find('link').text
+                
+                # Sentiment Analysis
+                blob = TextBlob(title)
+                score = blob.sentiment.polarity
+                
+                articles.append({
+                    "headline": title,
+                    "link": link,
+                    "score": round(score, 2),
+                    "label": "Bullish" if score > 0.1 else "Bearish" if score < -0.1 else "Neutral",
+                    "reason": "AI Sentiment Analysis"
+                })
+    except Exception as e:
+        print(f"News Error for {ticker}: {e}")
+        
+    return articles
+
+# ===========================================================================
+# 3. DCF LOGIC
 # ===========================================================================
 def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
-    res = {
-        "intrinsic_value": 0.0, 
-        "margin_of_safety": 0.0, 
-        "growth_rate": 0.0, 
-        "dcf_method": "none"
-    }
+    res = {"intrinsic_value": 0.0, "margin_of_safety": 0.0, "growth_rate": 0.0, "dcf_method": "none"}
     
     if sector in NO_DCF_SECTORS: 
         res["dcf_method"] = "skipped (sector)"
         return res
     
     try:
-        # A. GET FREE CASH FLOW (FCF)
-        # Priority: 1. Explicit Field -> 2. Calc (OCF + CapEx) -> 3. Fallback
         fcf = 0
         cf_df = stock.cashflow
         
+        # Try to find Free Cash Flow
         if cf_df is not None and not cf_df.empty:
-            # Method 1: Explicit
             if "Free Cash Flow" in cf_df.index:
                 val = pd.to_numeric(cf_df.loc["Free Cash Flow"], errors='coerce').iloc[0]
-                if val > 0:
-                    fcf = val
-                    res["dcf_method"] = "explicit_fcf"
+                if val > 0: fcf = val
             
-            # Method 2: Manual (OCF + CapEx)
-            # Note: CapEx is usually negative in yfinance, so we add it.
-            if fcf == 0 and "Total Cash From Operating Activities" in cf_df.index:
+            # Manual fallback (OCF + CapEx)
+            if fcf == 0 and "Total Cash From Operating Activities" in cf_df.index and "Capital Expenditures" in cf_df.index:
                 ocf = cf_df.loc["Total Cash From Operating Activities"].iloc[0]
-                capex = 0
-                if "Capital Expenditures" in cf_df.index:
-                    capex = cf_df.loc["Capital Expenditures"].iloc[0]
-                
-                fcf_calc = ocf + capex
-                if fcf_calc > 0:
-                    fcf = fcf_calc
-                    res["dcf_method"] = "manual_fcf"
+                capex = cf_df.loc["Capital Expenditures"].iloc[0]
+                if (ocf + capex) > 0: fcf = ocf + capex
 
-        # Method 3: Info dict fallback
-        if fcf == 0:
-            fcf = info.get("freeCashflow", 0)
-            if fcf > 0: res["dcf_method"] = "info_fallback"
+        if fcf == 0: fcf = info.get("freeCashflow", 0)
 
-        if fcf <= 0:
-            res["dcf_method"] = "failed (no positive FCF)"
-            return res
+        if fcf <= 0: return res
 
-        # B. GET GROWTH RATE
-        # Priority: Revenue Growth -> Earnings Growth -> Default 5%
         rev_g = info.get("revenueGrowth", 0.05) or 0.05
         res["growth_rate"] = round(rev_g * 100, 1)
         
-        # C. DISCOUNTING
-        discount_rate = 0.10
-        terminal_rate = 0.025
-        years = 5
+        discount = 0.10
+        terminal = 0.025
         
-        future_fcf = []
-        for i in range(1, years + 1):
-            future_fcf.append(fcf * ((1 + rev_g) ** i))
-            
-        terminal_value = (future_fcf[-1] * (1 + terminal_rate)) / (discount_rate - terminal_rate)
+        # 5 Year Projection
+        future_fcf = [fcf * ((1 + rev_g) ** i) for i in range(1, 6)]
+        tv = (future_fcf[-1] * (1 + terminal)) / (discount - terminal)
         
-        dcf_val = sum([val / ((1 + discount_rate) ** (i + 1)) for i, val in enumerate(future_fcf)])
-        pv_terminal = terminal_value / ((1 + discount_rate) ** years)
+        enterprise_val = sum([f / ((1 + discount) ** (i + 1)) for i, f in enumerate(future_fcf)])
+        enterprise_val += tv / ((1 + discount) ** 5)
         
-        enterprise_value = dcf_val + pv_terminal
-        
-        # D. EQUITY BRIDGE
-        debt = info.get("totalDebt", 0) or 0
-        cash = info.get("totalCash", 0) or 0
-        equity_value = enterprise_value - debt + cash
-        
-        # E. PER SHARE
+        equity_val = enterprise_val - info.get("totalDebt", 0) + info.get("totalCash", 0)
         shares = info.get("sharesOutstanding", 0)
-        if not shares:
-            res["dcf_method"] = "failed (no shares)"
-            return res
+        
+        if shares > 0:
+            fair_val = equity_val / shares
+            cp = info.get("currentPrice", 0) or 1
             
-        fair_value = equity_value / shares
-        current_price = info.get("currentPrice", 0) or 1
-        
-        # Sanity Cap (If IV > 5x price, cap it to avoid bad data outliers)
-        if fair_value > current_price * 5:
-            fair_value = current_price * 1.5
-        
-        if fair_value > 0:
-            res["intrinsic_value"] = round(fair_value, 2)
-            res["margin_of_safety"] = round(((fair_value - current_price) / current_price) * 100, 1)
+            # Sanity Cap
+            if fair_val > cp * 4: fair_val = cp * 1.5
+            
+            res["intrinsic_value"] = round(fair_val, 2)
+            res["margin_of_safety"] = round(((fair_val - cp) / cp) * 100, 1)
 
         return res
 
-    except Exception as e:
-        print(f"DCF Error: {e}")
-        res["dcf_method"] = "error"
+    except:
         return res
 
 # ===========================================================================
-# 3. HELPERS & ENGINE
+# 4. ENGINE
 # ===========================================================================
 def _calc_rsi(prices, period=14):
     try:
@@ -174,27 +165,8 @@ def _calc_rsi(prices, period=14):
     except:
         return 50
 
-def fetch_news(ticker: str) -> List[Dict]:
-    articles = []
-    try:
-        s = yf.Ticker(ticker)
-        for item in s.news[:5]:
-            blob = TextBlob(item['title'])
-            score = blob.sentiment.polarity
-            articles.append({
-                "headline": item['title'],
-                "link": item['link'],
-                "score": round(score, 2),
-                "label": "Bullish" if score > 0.1 else "Bearish" if score < -0.1 else "Neutral",
-                "reason": "AI Sentiment Analysis"
-            })
-    except:
-        pass
-    return articles
-
 class InvestmentEngine:
     def __init__(self):
-        # Default universe
         self.tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "INTC", "NFLX", "JPM", "BAC", "LLY", "XOM", "CVX", "KO", "PEP", "COST", "WMT", "DIS"]
 
     def load_data(self):
@@ -215,26 +187,19 @@ class InvestmentEngine:
                 info = stock.info
                 hist = stock.history(period="3mo")
                 
-                # Metrics
+                # Fetch Data
                 price = info.get("currentPrice", 0)
                 if price == 0 and not hist.empty: price = hist['Close'].iloc[-1]
                 
                 dcf = calc_dcf(stock, info, info.get("sector", ""))
                 rsi = _calc_rsi(hist['Close']) if not hist.empty else 50
-                news = fetch_news(t)
+                news = fetch_news(t) # Now uses Google RSS
+                
                 avg_sent = np.mean([n['score'] for n in news]) if news else 0
                 
-                # Scoring
-                score = 50
-                if dcf['margin_of_safety'] > 20: score += 20
-                if dcf['margin_of_safety'] < -20: score -= 20
+                score = 50 + (dcf['margin_of_safety'] / 3) + (avg_sent * 10)
                 if rsi < 30: score += 10
-                if avg_sent > 0.2: score += 10
-                score = max(0, min(100, score))
-                
-                verdict = "Hold"
-                if score > 75: verdict = "Strong Buy"
-                elif score < 30: verdict = "Sell"
+                score = max(0, min(100, int(score)))
 
                 record = {
                     "Ticker": t,
@@ -245,12 +210,12 @@ class InvestmentEngine:
                     "growth_rate": dcf["growth_rate"],
                     "RSI": round(rsi, 1),
                     "Sentiment": round(avg_sent, 2),
-                    "Oracle_Score": int(score),
-                    "AI_Verdict": verdict,
+                    "Oracle_Score": score,
+                    "AI_Verdict": "Strong Buy" if score > 75 else "Sell" if score < 40 else "Hold",
                     "Articles_JSON": json.dumps(news)
                 }
                 data.append(record)
-                time.sleep(0.5) # Prevent rate limit
+                time.sleep(0.5)
             except Exception as e:
                 print(f"Skipping {t}: {e}")
                 
