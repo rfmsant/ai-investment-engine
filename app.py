@@ -179,10 +179,30 @@ def article_badge(label: str) -> str:
     return f'<span class="badge {cls}">{label.upper()}</span>'
 
 def parse_articles(json_str) -> list:
-    try:
-        return json.loads(json_str) if isinstance(json_str, str) else []
-    except Exception:
+    """Robustly parse articles JSON that may have been mangled by CSV round-trip."""
+    if not json_str or not isinstance(json_str, str) or json_str.strip() in ('[]', '', 'nan'):
         return []
+    try:
+        result = json.loads(json_str)
+        if isinstance(result, list):
+            return result
+    except Exception:
+        pass
+    try:
+        stripped = json_str.strip('"').replace('""', '"')
+        result = json.loads(stripped)
+        if isinstance(result, list):
+            return result
+    except Exception:
+        pass
+    try:
+        import ast
+        result = ast.literal_eval(json_str)
+        if isinstance(result, list):
+            return result
+    except Exception:
+        pass
+    return []
 
 def plotly_dark_layout(fig, title=""):
     fig.update_layout(
@@ -233,6 +253,13 @@ with st.sidebar:
             progress_bar.empty()
             st.success("Scan complete")
             st.rerun()
+
+    import os as _os
+    if st.button("🗑️  Clear Cache & Re-scan"):
+        if _os.path.exists("market_cache.csv"):
+            _os.remove("market_cache.csv")
+        st.session_state.data = pd.DataFrame()
+        st.rerun()
 
     df_raw = st.session_state.data
 
@@ -476,6 +503,17 @@ if not fdf.empty:
         st.caption("Axis: X = Valuation opportunity (higher = more undervalued), Y = Technical momentum (RSI). Bubble size = Oracle Score. **Green zone**: undervalued & not overbought — ideal entries. **Red zone**: overvalued & overbought — caution.")
 
         if {'RSI', 'margin_of_safety', 'Oracle_Score', 'Sector'}.issubset(fdf.columns):
+            # Check if DCF data is available
+            dcf_available = (fdf['margin_of_safety'] != 0).sum()
+            if dcf_available < 3:
+                st.warning(f"⚠️ Only {dcf_available} stocks have DCF valuation data — this is why bubbles cluster on X=0. "
+                           "Run a fresh scan to populate (requires yfinance to fetch cash flow statements, "
+                           "which can take 5–10 min for a full universe).")
+
+            # Compute axis range dynamically
+            mos_values = fdf['margin_of_safety'].dropna()
+            x_min = max(mos_values.quantile(0.02) - 10, -200)
+            x_max = min(mos_values.quantile(0.98) + 10,  400)
             fig_heat = px.scatter(
                 fdf,
                 x='margin_of_safety',
@@ -483,7 +521,8 @@ if not fdf.empty:
                 size=fdf['Oracle_Score'].clip(lower=5),
                 color='Oracle_Score',
                 hover_name='Ticker',
-                hover_data={'Sector': True, 'Price': True, 'risk_level': True},
+                hover_data={'Sector': True, 'Price': True, 'risk_level': True,
+                            'intrinsic_value': True, 'dcf_confidence': True},
                 color_continuous_scale=[(0, "#ef4444"), (0.5, "#f59e0b"), (1, "#22c55e")],
                 range_color=[0, 100],
                 labels={
@@ -492,6 +531,7 @@ if not fdf.empty:
                 },
             )
             fig_heat = plotly_dark_layout(fig_heat)
+            fig_heat.update_layout(xaxis=dict(range=[x_min, x_max]))
             # Zone shading
             fig_heat.add_shape(type="rect", x0=20, x1=300, y0=0, y1=70,
                                fillcolor="rgba(34,197,94,0.06)", line_width=0)
@@ -519,32 +559,37 @@ if not fdf.empty:
         # ── 2.3  Volatility Distribution ────────────────────────────────────
         if 'daily_volatility' in fdf.columns:
             st.markdown("#### Portfolio Volatility Distribution")
-            st.caption("**How to read**: A left-skewed distribution (mass on the left) means most of your watchlist is low-volatility — good for risk management. The three colour bands show Low / Medium / High risk thresholds.")
             fig_vol = go.Figure()
             fig_vol.add_trace(go.Histogram(
                 x=fdf['daily_volatility'],
                 nbinsx=30,
                 marker_color='#3b82f6',
-                opacity=0.7,
-                name="All assets"
+                opacity=0.75,
+                name="Assets"
             ))
-            # Colour zones
-            fig_vol.add_vrect(x0=0,   x1=2,   fillcolor="rgba(34,197,94,0.08)",  line_width=0,
-                              annotation_text="Low Risk", annotation_position="top left",
-                              annotation_font_color="#22c55e")
-            fig_vol.add_vrect(x0=2,   x1=5,   fillcolor="rgba(245,158,11,0.08)", line_width=0,
-                              annotation_text="Medium Risk", annotation_position="top left",
-                              annotation_font_color="#f59e0b")
-            fig_vol.add_vrect(x0=5,   x1=100, fillcolor="rgba(239,68,68,0.08)",  line_width=0,
-                              annotation_text="High Risk", annotation_position="top left",
-                              annotation_font_color="#ef4444")
+            # Colour zone shading (no annotation text to avoid overlap)
+            fig_vol.add_vrect(x0=0,  x1=2,   fillcolor="rgba(34,197,94,0.08)",  line_width=0, layer="below")
+            fig_vol.add_vrect(x0=2,  x1=5,   fillcolor="rgba(245,158,11,0.08)", line_width=0, layer="below")
+            fig_vol.add_vrect(x0=5,  x1=200, fillcolor="rgba(239,68,68,0.06)",  line_width=0, layer="below")
+            # Threshold lines with labels
+            fig_vol.add_vline(x=2, line_dash="dot", line_color="#22c55e", line_width=1.5,
+                              annotation_text="Low/Medium (2%)",
+                              annotation_position="top right",
+                              annotation_font=dict(color="#22c55e", size=10))
+            fig_vol.add_vline(x=5, line_dash="dot", line_color="#f59e0b", line_width=1.5,
+                              annotation_text="Medium/High (5%)",
+                              annotation_position="top right",
+                              annotation_font=dict(color="#f59e0b", size=10))
             fig_vol.update_layout(
                 xaxis_title="Daily Volatility %  (ATR / Price × 100)",
                 yaxis_title="Number of Assets",
                 bargap=0.05,
+                xaxis=dict(range=[0, max(fdf['daily_volatility'].quantile(0.99) * 1.1, 10)]),
             )
             fig_vol = plotly_dark_layout(fig_vol)
             st.plotly_chart(fig_vol, use_container_width=True)
+
+            st.caption("**How to read:** Green zone = low volatility (<2% daily move), amber = medium (2–5%), red = high (>5%). A distribution skewed left = safer watchlist overall.")
 
             # Quick legend
             lc1, lc2, lc3 = st.columns(3)
