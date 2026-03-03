@@ -1,0 +1,24 @@
+name: Hourly Market Scan
+on:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour, every day
+  workflow_dispatch:      # Allows you to run it manually for testing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install tools
+        run: |
+          pip install pandas yfinance pandas-ta textblob requests
+
+      - name: Run Update Script
+        run: python update_now.py
