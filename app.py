@@ -6,43 +6,17 @@ from logic import InvestmentEngine, generate_ai_report
 
 st.set_page_config(page_title="Apex Pro", layout="wide", page_icon="◈")
 
-# ===========================================================================
-# APPLE-STYLE DESIGN SYSTEM
-# ===========================================================================
+# APPLE DESIGN SYSTEM
 st.markdown("""
 <style>
-    /* System Reset */
-    .stApp { background-color: #000000; color: #f5f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    
-    /* Metrics Cards */
-    [data-testid="metric-container"] { 
-        background-color: #1c1c1e; 
-        border: 1px solid #2c2c2e; 
-        border-radius: 12px; 
-        padding: 16px;
-    }
-    
-    /* Tables */
-    [data-testid="stDataFrame"] { background-color: #1c1c1e; border-radius: 12px; }
-    
-    /* Buttons */
-    .stButton>button { 
-        background-color: #0A84FF !important; 
-        color: white !important; 
-        border-radius: 8px; 
-        border: none;
-        font-weight: 500;
-    }
-    
-    /* Sidebar */
+    .stApp { background-color: #000000; color: #f5f5f7; font-family: -apple-system, system-ui, sans-serif; }
+    [data-testid="metric-container"] { background-color: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 14px; padding: 20px; }
+    .stDataFrame { background-color: #1c1c1e; border-radius: 12px; }
+    .stButton>button { background-color: #0A84FF !important; color: white !important; border-radius: 10px; border: none; padding: 10px 24px; font-weight: 600; }
     section[data-testid="stSidebar"] { background-color: #1c1c1e; border-right: 1px solid #2c2c2e; }
-    
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
-    .stTabs [data-baseweb="tab"] { color: #86868b; font-weight: 500; }
-    .stTabs [aria-selected="true"] { color: #0A84FF; border-bottom-color: #0A84FF; }
-    
-    h1, h2, h3 { color: #f5f5f7; font-weight: 600; }
+    h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; border-bottom: 1px solid #2c2c2e; }
+    .stTabs [aria-selected="true"] { color: #0A84FF; border-bottom: 2px solid #0A84FF; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,152 +27,80 @@ def get_engine(): return InvestmentEngine()
 engine = get_engine()
 
 if "data" not in st.session_state: st.session_state["data"] = pd.DataFrame()
-if st.session_state["data"].empty: 
+if st.session_state["data"].empty:
     df_c, ok = engine.load_data()
     st.session_state["data"] = df_c
 
-# ===========================================================================
-# SIDEBAR
-# ===========================================================================
 with st.sidebar:
     st.markdown("## ◈ Apex Pro")
-    
-    if st.button("📡 Global Scan", type="primary"):
-        with st.spinner("Analyzing 100+ Assets..."):
-            pb = st.progress(0, "Initializing...")
-            st.session_state["data"] = engine.fetch_market_data(pb)
-            pb.empty()
+    if st.button("📡 Global Scan (500+ Assets)", type="primary", use_container_width=True):
+        pb = st.progress(0, "Warming Engines...")
+        st.session_state["data"] = engine.fetch_market_data(pb)
+        pb.empty()
         st.rerun()
-
-    if st.button("🧹 Clear Cache"):
-        if os.path.exists("market_cache.csv"):
-            os.remove("market_cache.csv")
+    
+    if st.button("🧹 Clear Cache", use_container_width=True):
+        if os.path.exists("market_cache.csv"): os.remove("market_cache.csv")
         st.session_state["data"] = pd.DataFrame()
         st.rerun()
 
-    st.divider()
-    with st.expander("Definitions"):
-        st.caption("**Oracle Score:** 0-100 rating. >75 is Strong Buy.")
-        st.caption("**Deep Value:** Stocks trading >20% below DCF.")
-        st.caption("**High Risk:** Daily Volatility > 3.5%.")
-
-# ===========================================================================
-# MAIN DASHBOARD
-# ===========================================================================
 df = st.session_state["data"]
 if df.empty:
-    st.info("System Idle. Click 'Global Scan' in sidebar.")
+    st.info("Market engine offline. Click Global Scan.")
     st.stop()
 
-# --- DRILL-DOWN METRICS ---
-# The expanders inside columns allow you to see WHICH stocks are in the count
+# --- TOP HUD ---
 c1, c2, c3, c4 = st.columns(4)
-
 with c1:
     st.metric("Universe", len(df))
-    with st.expander("View Sectors"):
-        st.dataframe(df['Sector'].value_counts(), use_container_width=True)
-
+    with st.expander("Sectors"): st.table(df['Sector'].value_counts().head(5))
 with c2:
-    hot_picks = df[df['Oracle_Score'] > 75]
-    st.metric("Hot Picks", len(hot_picks))
-    with st.expander("View List"):
-        st.dataframe(hot_picks[['Ticker', 'Oracle_Score']], hide_index=True)
-
+    hot = df[df['Oracle_Score'] > 75]
+    st.metric("Hot Picks", len(hot))
+    if not hot.empty:
+        with st.expander("Show Tickers"): st.write(", ".join(hot['Ticker'].tolist()))
 with c3:
-    deep_value = df[df['margin_of_safety'] > 20]
-    st.metric("Deep Value", len(deep_value))
-    with st.expander("View List"):
-        st.dataframe(deep_value[['Ticker', 'margin_of_safety']], hide_index=True)
-
+    dv = df[df['margin_of_safety'] > 20]
+    st.metric("Deep Value", len(dv))
+    if not dv.empty:
+        with st.expander("Show Tickers"): st.write(", ".join(dv['Ticker'].tolist()))
 with c4:
-    high_risk = df[df['risk_level'] == 'High']
-    st.metric("High Risk", len(high_risk))
-    with st.expander("View List"):
-        st.dataframe(high_risk[['Ticker', 'risk_level']], hide_index=True)
+    hr = df[df['risk_level'] == 'High']
+    st.metric("High Risk", len(hr))
+    if not hr.empty:
+        with st.expander("Show Tickers"): st.write(", ".join(hr['Ticker'].tolist()))
 
-# --- CONTENT TABS ---
-tab1, tab2 = st.tabs(["⚡ Market Monitor", "🧠 AI Analyst"])
+# --- TABS ---
+tab1, tab2 = st.tabs(["📊 Market Monitor", "🧠 Deep Analysis"])
 
-# TAB 1: MARKET MONITOR (Clean List View)
 with tab1:
-    col_opps, col_avoid = st.columns(2)
-    
-    with col_opps:
-        st.markdown("### 🟢 Top Opportunities")
-        # Logic: Score > 60 OR Upside > 15
-        opps = df[(df['Oracle_Score'] > 60) | (df['margin_of_safety'] > 15)].sort_values("Oracle_Score", ascending=False).head(15)
-        st.dataframe(
-            opps[['Ticker', 'Sector', 'Price', 'margin_of_safety', 'Oracle_Score']],
-            column_config={
-                "margin_of_safety": st.column_config.NumberColumn("Upside", format="%.1f%%"),
-                "Oracle_Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)
-            },
-            hide_index=True, use_container_width=True
-        )
+    c_l, c_r = st.columns(2)
+    with c_l:
+        st.markdown("### 🟢 Top Conviction")
+        st.dataframe(df.sort_values("Oracle_Score", ascending=False).head(20)[['Ticker', 'Price', 'margin_of_safety', 'Oracle_Score']], hide_index=True, use_container_width=True)
+    with c_r:
+        st.markdown("### 🔴 Risk Alerts")
+        st.dataframe(df.sort_values("margin_of_safety", ascending=True).head(20)[['Ticker', 'Price', 'margin_of_safety', 'risk_level']], hide_index=True, use_container_width=True)
 
-    with col_avoid:
-        st.markdown("### 🔴 High Risk / Overvalued")
-        # Logic: Score < 40 OR Downside < -20
-        avoid = df[(df['Oracle_Score'] < 40) | (df['margin_of_safety'] < -20)].sort_values("Oracle_Score", ascending=True).head(15)
-        st.dataframe(
-            avoid[['Ticker', 'Sector', 'margin_of_safety', 'risk_level', 'Oracle_Score']],
-            column_config={
-                "margin_of_safety": st.column_config.NumberColumn("Overvalued", format="%.1f%%"),
-                "Oracle_Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)
-            },
-            hide_index=True, use_container_width=True
-        )
-
-# TAB 2: AI ANALYST
 with tab2:
-    st.markdown("### Deep Dive Analysis")
-    
-    col_sel, col_btn = st.columns([3, 1])
-    with col_sel:
-        selected = st.selectbox("Select Asset", df['Ticker'].unique(), label_visibility="collapsed")
-    
-    if selected:
-        row = df[df['Ticker'] == selected].iloc[0]
+    sel = st.selectbox("Select Asset", sorted(df['Ticker'].unique()))
+    if sel:
+        row = df[df['Ticker'] == sel].iloc[0]
+        st.markdown(f"## {sel} Analysis")
         
-        # Financial Strip
-        f1, f2, f3, f4 = st.columns(4)
-        f1.metric("Price", f"${row['Price']}")
-        f2.metric("Fair Value", f"${row['intrinsic_value']}")
-        f3.metric("Growth Est", f"{row['growth_rate']}%")
-        f4.metric("Risk", row['risk_level'])
-
-        st.divider()
-
-        # Split: Report on Left, News on Right
-        c_report, c_feed = st.columns([2, 1])
+        cl1, cl2 = st.columns([2, 1])
+        with cl1:
+            if st.button(f"Generate Report for {sel}", type="primary"):
+                with st.spinner("AI analyzing wire data and financials..."):
+                    n = json.loads(row['Articles_JSON'])
+                    rep = generate_ai_report(sel, row.to_dict(), n, OPENAI_API_KEY)
+                    st.session_state[f"rep_{sel}"] = rep
+            if f"rep_{sel}" in st.session_state: st.markdown(st.session_state[f"rep_{sel}"])
         
-        with c_report:
-            if OPENAI_API_KEY:
-                if st.button(f"Generate Memo for {selected}", type="primary", use_container_width=True):
-                    with st.spinner("Compiling Intelligence..."):
-                        news_list = json.loads(row['Articles_JSON']) if isinstance(row['Articles_JSON'], str) else []
-                        report = generate_ai_report(selected, row.to_dict(), news_list, OPENAI_API_KEY)
-                        st.session_state[f"rep_{selected}"] = report
-                
-                if f"rep_{selected}" in st.session_state:
-                    st.markdown(st.session_state[f"rep_{selected}"])
-            else:
-                st.warning("API Key Required for AI Reports")
-
-        with c_feed:
+        with cl2:
             st.markdown("#### 📰 Wire Feed")
-            try:
-                news_items = json.loads(row['Articles_JSON'])
-                if not news_items: st.caption("No recent data.")
-                for n in news_items[:5]:
-                    # Color code based on sentiment
-                    color = "#22c55e" if n['label'] == "Bullish" else "#ef4444" if n['label'] == "Bearish" else "#a1a1aa"
-                    
-                    st.markdown(f"**[{n['headline']}]({n['link']})**")
-                    st.caption(f"Sentiment: {n['label']}")
-                    # THE SUMMARY IS HERE:
-                    st.markdown(f"<div style='border-left: 2px solid {color}; padding-left: 10px; font-size: 13px; color: #d1d1d6;'>{n['reason']}</div>", unsafe_allow_html=True)
-                    st.divider()
-            except: 
-                st.write("Feed Error")
+            news = json.loads(row['Articles_JSON'])
+            for item in news:
+                st.markdown(f"**{item['headline']}**")
+                st.caption(item['reason'])
+                st.divider()
