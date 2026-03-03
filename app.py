@@ -4,8 +4,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
 from logic import InvestmentEngine
 
 # Page Configuration
@@ -94,12 +92,13 @@ if not df.empty:
         filtered_df = df
     
     # Risk Filter
-    risk_levels = st.sidebar.multiselect(
-        "⚡ Risk Level Filter",
-        ["Low", "Medium", "High"],
-        default=["Low", "Medium", "High"]
-    )
     if 'risk_level' in filtered_df.columns:
+        available_risks = filtered_df['risk_level'].unique()
+        risk_levels = st.sidebar.multiselect(
+            "⚡ Risk Level Filter",
+            available_risks,
+            default=available_risks
+        )
         filtered_df = filtered_df[filtered_df['risk_level'].isin(risk_levels)]
     
     # Oracle Score Filter
@@ -125,7 +124,7 @@ if not filtered_df.empty:
         avg_upside = filtered_df[filtered_df['margin_of_safety'] > 0]['margin_of_safety'].mean()
         st.metric("Avg Upside %", f"{avg_upside:.1f}%" if not pd.isna(avg_upside) else "N/A")
     with col5:
-        low_risk = len(filtered_df[filtered_df['risk_level'] == 'Low'])
+        low_risk = len(filtered_df[filtered_df['risk_level'] == 'Low']) if 'risk_level' in filtered_df.columns else 0
         st.metric("Low Risk Assets", low_risk)
 
     # Tabs
@@ -184,7 +183,7 @@ if not filtered_df.empty:
                 with col1:
                     st.metric("Current Price", f"${row['Price']}")
                     st.metric("Fair Value", f"${row['intrinsic_value']}")
-                    st.metric("Risk Level", row['risk_level'])
+                    st.metric("Risk Level", row.get('risk_level', 'Unknown'))
                 with col2:
                     st.write("**AI Analysis:**")
                     st.write(row.get('AI_Verdict', 'Analysis pending...'))
@@ -217,26 +216,31 @@ if not filtered_df.empty:
         # Correlation Analysis
         st.subheader("🔗 Portfolio Correlation Risk")
         
-        # Create correlation matrix
+        # Create correlation matrix using available numeric columns
         numeric_cols = ['Price', 'RSI', 'Oracle_Score', 'margin_of_safety']
         available_numeric = [col for col in numeric_cols if col in filtered_df.columns]
         
         if len(available_numeric) > 1 and len(filtered_df) > 5:
-            corr_matrix = filtered_df[available_numeric].corr()
-            
-            fig_corr = px.imshow(
-                corr_matrix,
-                text_auto=True,
-                aspect="auto",
-                title="Asset Correlation Matrix",
-                color_continuous_scale="RdBu"
-            )
-            st.plotly_chart(fig_corr, use_container_width=True)
-            
-            # Risk Warning
-            high_corr = (corr_matrix.abs() > 0.7).sum().sum() - len(corr_matrix)
-            if high_corr > 0:
-                st.warning(f"⚠️ **Systemic Risk Alert:** {high_corr} high correlation pairs detected")
+            try:
+                corr_matrix = filtered_df[available_numeric].corr()
+                
+                fig_corr = px.imshow(
+                    corr_matrix.values,
+                    x=corr_matrix.columns,
+                    y=corr_matrix.columns,
+                    text_auto=True,
+                    aspect="auto",
+                    title="Asset Correlation Matrix",
+                    color_continuous_scale="RdBu_r"
+                )
+                st.plotly_chart(fig_corr, use_container_width=True)
+                
+                # Risk Warning
+                high_corr_count = ((corr_matrix.abs() > 0.7).sum().sum() - len(corr_matrix)) // 2
+                if high_corr_count > 0:
+                    st.warning(f"⚠️ **Systemic Risk Alert:** {high_corr_count} high correlation pairs detected")
+            except Exception as e:
+                st.info("Correlation analysis requires more data points")
         
         # Volatility Distribution
         st.subheader("📈 Volatility Distribution")
@@ -268,7 +272,7 @@ if not filtered_df.empty:
                 col2.metric("Fair Value", f"${row['intrinsic_value']}")
                 col3.metric("Upside", f"{row['margin_of_safety']:.1f}%")
                 col4.metric("Oracle Score", f"{row['Oracle_Score']}")
-                col5.metric("Risk Level", row['risk_level'])
+                col5.metric("Risk Level", row.get('risk_level', 'Unknown'))
                 
                 # Valuation Football Field Chart
                 st.subheader("⚽ Valuation Football Field")
@@ -276,48 +280,51 @@ if not filtered_df.empty:
                 current_price = row['Price']
                 fair_value = row['intrinsic_value']
                 
-                fig_football = go.Figure()
-                
-                # Add ranges
-                fig_football.add_shape(
-                    type="rect", x0=0, x1=1, y0=fair_value*0.8, y1=fair_value*1.2,
-                    fillcolor="lightgreen", opacity=0.3, line_width=0
-                )
-                fig_football.add_shape(
-                    type="rect", x0=0, x1=1, y0=fair_value*0.6, y1=fair_value*0.8,
-                    fillcolor="lightblue", opacity=0.3, line_width=0
-                )
-                fig_football.add_shape(
-                    type="rect", x0=0, x1=1, y0=fair_value*1.2, y1=fair_value*1.4,
-                    fillcolor="lightyellow", opacity=0.3, line_width=0
-                )
-                
-                # Add current price line
-                fig_football.add_hline(
-                    y=current_price, 
-                    line_dash="dash", 
-                    line_color="red", 
-                    annotation_text=f"Current: ${current_price}"
-                )
-                
-                # Add fair value line
-                fig_football.add_hline(
-                    y=fair_value, 
-                    line_color="blue", 
-                    annotation_text=f"Fair Value: ${fair_value}"
-                )
-                
-                fig_football.update_layout(
-                    title=f"{selected_ticker} - Valuation Analysis",
-                    xaxis_title="",
-                    yaxis_title="Price ($)",
-                    showlegend=False,
-                    height=400
-                )
-                
-                fig_football.update_xaxis(showticklabels=False)
-                
-                st.plotly_chart(fig_football, use_container_width=True)
+                if fair_value > 0:
+                    fig_football = go.Figure()
+                    
+                    # Add ranges
+                    fig_football.add_shape(
+                        type="rect", x0=0, x1=1, y0=fair_value*0.8, y1=fair_value*1.2,
+                        fillcolor="lightgreen", opacity=0.3, line_width=0
+                    )
+                    fig_football.add_shape(
+                        type="rect", x0=0, x1=1, y0=fair_value*0.6, y1=fair_value*0.8,
+                        fillcolor="lightblue", opacity=0.3, line_width=0
+                    )
+                    fig_football.add_shape(
+                        type="rect", x0=0, x1=1, y0=fair_value*1.2, y1=fair_value*1.4,
+                        fillcolor="lightyellow", opacity=0.3, line_width=0
+                    )
+                    
+                    # Add current price line
+                    fig_football.add_hline(
+                        y=current_price, 
+                        line_dash="dash", 
+                        line_color="red", 
+                        annotation_text=f"Current: ${current_price}"
+                    )
+                    
+                    # Add fair value line
+                    fig_football.add_hline(
+                        y=fair_value, 
+                        line_color="blue", 
+                        annotation_text=f"Fair Value: ${fair_value}"
+                    )
+                    
+                    fig_football.update_layout(
+                        title=f"{selected_ticker} - Valuation Analysis",
+                        xaxis_title="",
+                        yaxis_title="Price ($)",
+                        showlegend=False,
+                        height=400
+                    )
+                    
+                    fig_football.update_xaxis(showticklabels=False)
+                    
+                    st.plotly_chart(fig_football, use_container_width=True)
+                else:
+                    st.warning("DCF valuation not available for this asset")
                 
                 # LLM Analysis
                 st.subheader("🤖 AI Investment Thesis")
