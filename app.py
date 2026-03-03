@@ -4,430 +4,758 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import json
 from logic import InvestmentEngine
 
-# Page Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG
+# ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Institutional Investment Command Center", 
-    layout="wide", 
-    page_icon="🏛️"
+    page_title="Apex Markets",
+    layout="wide",
+    page_icon="◈",
+    initial_sidebar_state="expanded",
 )
 
-# Professional CSS
+# ─────────────────────────────────────────────────────────────────────────────
+# DESIGN SYSTEM  ── dark, editorial, high-contrast
+# ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .metric-card {
-        background-color: #0e1117;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #333;
-        margin: 5px;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        padding-left: 20px;
-        padding-right: 20px;
-    }
-    .institutional-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #ffffff;
-        text-align: center;
-        margin-bottom: 20px;
-        background: linear-gradient(90deg, #1f77b4, #ff7f0e);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .risk-high { color: #ff4444; font-weight: bold; }
-    .risk-medium { color: #ffaa00; font-weight: bold; }
-    .risk-low { color: #44ff44; font-weight: bold; }
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+  /* ── Global reset ── */
+  html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
+
+  .stApp { background: #09090b; color: #e4e4e7; }
+
+  /* ── Sidebar ── */
+  section[data-testid="stSidebar"] {
+    background: #111113 !important;
+    border-right: 1px solid #27272a;
+  }
+  section[data-testid="stSidebar"] * { color: #a1a1aa !important; }
+  section[data-testid="stSidebar"] .stButton>button {
+    background: #3b82f6 !important;
+    color: #fff !important;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    width: 100%;
+    padding: 10px 0;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    transition: background .2s;
+  }
+  section[data-testid="stSidebar"] .stButton>button:hover { background:#2563eb!important; }
+
+  /* ── Tabs ── */
+  .stTabs [data-baseweb="tab-list"] {
+    background: transparent;
+    border-bottom: 1px solid #27272a;
+    gap: 0;
+  }
+  .stTabs [data-baseweb="tab"] {
+    background: transparent;
+    color: #71717a;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    padding: 12px 24px;
+    border-bottom: 2px solid transparent;
+    transition: all .2s;
+  }
+  .stTabs [aria-selected="true"] {
+    color: #3b82f6 !important;
+    border-bottom-color: #3b82f6 !important;
+    background: transparent !important;
+  }
+
+  /* ── Metric cards ── */
+  [data-testid="metric-container"] {
+    background: #111113;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    padding: 16px 20px;
+    transition: border-color .2s;
+  }
+  [data-testid="metric-container"]:hover { border-color: #3b82f6; }
+  [data-testid="metric-container"] label { color: #71717a !important; font-size: 11px !important; letter-spacing: 0.08em; text-transform: uppercase; }
+  [data-testid="metric-container"] [data-testid="stMetricValue"] { color: #f4f4f5 !important; font-size: 26px !important; font-weight: 700 !important; }
+
+  /* ── DataFrames ── */
+  [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; border: 1px solid #27272a; }
+
+  /* ── Expanders ── */
+  .streamlit-expanderHeader { background: #111113 !important; border: 1px solid #27272a !important; border-radius: 10px !important; color: #e4e4e7 !important; font-weight: 500 !important; }
+  .streamlit-expanderContent { background: #0d0d10 !important; border: 1px solid #27272a !important; border-top: none !important; border-radius: 0 0 10px 10px !important; padding: 16px !important; }
+
+  /* ── Dividers ── */
+  hr { border-color: #27272a !important; }
+
+  /* ── Labels / subheaders ── */
+  h1 { font-size: 28px !important; font-weight: 700 !important; color: #f4f4f5 !important; letter-spacing: -0.02em; }
+  h2 { font-size: 18px !important; font-weight: 600 !important; color: #e4e4e7 !important; }
+  h3 { font-size: 14px !important; font-weight: 600 !important; color: #a1a1aa !important; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ── Scrollable filter tags ── */
+  .stMultiSelect > div { background: #111113 !important; border: 1px solid #27272a !important; border-radius: 8px !important; }
+
+  /* ── Clickable metric pill ── */
+  .apex-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #111113; border: 1px solid #27272a;
+    border-radius: 100px; padding: 6px 14px;
+    cursor: pointer; transition: all .15s;
+    font-size: 12px; color: #a1a1aa;
+  }
+  .apex-pill:hover { border-color: #3b82f6; color: #3b82f6; }
+  .apex-pill .val { font-weight: 700; font-size: 16px; color: #f4f4f5; }
+
+  /* ── Article cards ── */
+  .article-card {
+    background: #111113; border: 1px solid #27272a;
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 8px;
+  }
+  .article-card.bull { border-left: 3px solid #22c55e; }
+  .article-card.bear { border-left: 3px solid #ef4444; }
+  .article-card.neut { border-left: 3px solid #71717a; }
+  .article-title { font-size: 13px; font-weight: 500; color: #e4e4e7; line-height: 1.4; }
+  .article-meta  { font-size: 11px; color: #52525b; margin-top: 4px; }
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.05em; padding: 2px 8px; border-radius: 100px;
+  }
+  .badge-bull { background: #14532d; color: #4ade80; }
+  .badge-bear { background: #450a0a; color: #f87171; }
+  .badge-neut { background: #27272a; color: #a1a1aa; }
+
+  /* ── Header bar ── */
+  .apex-header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 4px 0 20px;
+    border-bottom: 1px solid #27272a; margin-bottom: 24px;
+  }
+  .apex-logo { font-size: 22px; font-weight: 700; color: #f4f4f5; letter-spacing: -0.03em; }
+  .apex-sub  { font-size: 12px; color: #52525b; letter-spacing: 0.05em; }
+
+  /* scrollable ticker list inside expander */
+  .ticker-grid { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow-y: auto; padding: 4px 0; }
+  .ticker-chip {
+    background: #18181b; border: 1px solid #3f3f46;
+    border-radius: 6px; padding: 3px 10px;
+    font-size: 11px; font-family: 'DM Mono', monospace; color: #a1a1aa;
+  }
+
+  /* ── Plotly ── */
+  .js-plotly-plot .plotly .modebar { background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Title
-st.markdown('<h1 class="institutional-header">🏛️ INSTITUTIONAL INVESTMENT COMMAND CENTER</h1>', unsafe_allow_html=True)
-st.markdown("*Powered by Advanced DCF Modeling, LLM Analysis & Risk Management*")
 
-# Initialize Engine
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+def score_color(score: float) -> str:
+    if score >= 70: return "#22c55e"
+    if score >= 45: return "#f59e0b"
+    return "#ef4444"
+
+def rsi_color(rsi: float) -> str:
+    if rsi > 70: return "#ef4444"
+    if rsi < 30: return "#22c55e"
+    return "#a1a1aa"
+
+def mos_color(mos: float) -> str:
+    if mos > 20: return "#22c55e"
+    if mos > 0:  return "#f59e0b"
+    return "#ef4444"
+
+def article_css_class(label: str) -> str:
+    return {"Bullish": "bull", "Bearish": "bear"}.get(label, "neut")
+
+def article_badge(label: str) -> str:
+    cls = {"Bullish": "badge-bull", "Bearish": "badge-bear"}.get(label, "badge-neut")
+    return f'<span class="badge {cls}">{label.upper()}</span>'
+
+def parse_articles(json_str) -> list:
+    try:
+        return json.loads(json_str) if isinstance(json_str, str) else []
+    except Exception:
+        return []
+
+def plotly_dark_layout(fig, title=""):
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color="#e4e4e7"), x=0),
+        paper_bgcolor="#111113",
+        plot_bgcolor="#0d0d10",
+        font=dict(family="DM Sans", color="#71717a", size=11),
+        margin=dict(l=16, r=16, t=40, b=16),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#27272a", borderwidth=1),
+        xaxis=dict(gridcolor="#1f1f23", zerolinecolor="#27272a", linecolor="#27272a"),
+        yaxis=dict(gridcolor="#1f1f23", zerolinecolor="#27272a", linecolor="#27272a"),
+    )
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENGINE & SESSION
+# ─────────────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_engine():
     return InvestmentEngine()
 
 engine = get_engine()
 
-# Data Loading
 if 'data' not in st.session_state:
     df_cache, from_cache = engine.load_data()
     st.session_state.data = df_cache
-    if from_cache:
-        st.sidebar.success("✅ Data loaded from cache")
+    st.session_state.from_cache = from_cache
 
-# Sidebar Controls
-st.sidebar.header("🎛️ Control Panel")
+# modal-like drill-down state
+if 'drill_ticker' not in st.session_state:
+    st.session_state.drill_ticker = None
+if 'show_metric_detail' not in st.session_state:
+    st.session_state.show_metric_detail = None
 
-if st.sidebar.button('🔄 Execute Full Market Scan', type="primary"):
-    with st.spinner("Executing institutional-grade analysis..."):
-        progress_bar = st.progress(0, "Initializing systems...")
-        st.session_state.data = engine.fetch_market_data(progress_bar)
-        progress_bar.empty()
-        st.success("✅ Market scan complete")
-        st.rerun()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### ◈ APEX MARKETS")
+    st.markdown("---")
+
+    if st.button("⟳  Run Global Scan", type="primary"):
+        with st.spinner("Scanning global markets…"):
+            progress_bar = st.progress(0, "Initialising…")
+            st.session_state.data = engine.fetch_market_data(progress_bar)
+            progress_bar.empty()
+            st.success("Scan complete")
+            st.rerun()
+
+    df_raw = st.session_state.data
+
+    if not df_raw.empty:
+        st.markdown("#### Filters")
+
+        if 'Sector' in df_raw.columns:
+            all_sectors = sorted(df_raw['Sector'].dropna().unique())
+            sel_sectors = st.multiselect("Sector", all_sectors, default=all_sectors)
+        else:
+            sel_sectors = []
+
+        if 'Region' in df_raw.columns:
+            all_regions = sorted(df_raw['Region'].dropna().unique())
+            sel_regions = st.multiselect("Region", all_regions, default=all_regions)
+        else:
+            sel_regions = []
+
+        if 'risk_level' in df_raw.columns:
+            risk_opts = sorted(df_raw['risk_level'].dropna().unique())
+            sel_risks = st.multiselect("Risk Level", risk_opts, default=risk_opts)
+        else:
+            sel_risks = []
+
+        min_score = st.slider("Min Oracle Score", 0, 100, 0)
+
+    st.markdown("---")
+    st.caption("Apex Markets v3.0 · Global Edition")
+    if not df_raw.empty and 'Last_Updated' in df_raw.columns:
+        st.caption(f"Last scan: {df_raw['Last_Updated'].iloc[0]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILTER
+# ─────────────────────────────────────────────────────────────────────────────
 df = st.session_state.data
 
-# Filters
 if not df.empty:
-    if 'Sector' in df.columns:
-        all_sectors = sorted(df['Sector'].unique())
-        selected_sectors = st.sidebar.multiselect(
-            "🏭 Sector Filter", 
-            all_sectors, 
-            default=all_sectors
-        )
-        filtered_df = df[df['Sector'].isin(selected_sectors)]
-    else:
-        filtered_df = df
-    
-    # Risk Filter
-    if 'risk_level' in filtered_df.columns:
-        available_risks = filtered_df['risk_level'].unique()
-        risk_levels = st.sidebar.multiselect(
-            "⚡ Risk Level Filter",
-            available_risks,
-            default=available_risks
-        )
-        filtered_df = filtered_df[filtered_df['risk_level'].isin(risk_levels)]
-    
-    # Oracle Score Filter
-    min_score = st.sidebar.slider("🎯 Minimum Oracle Score", 0, 100, 50)
-    filtered_df = filtered_df[filtered_df['Oracle_Score'] >= min_score]
+    fdf = df.copy()
+    if sel_sectors and 'Sector' in fdf.columns:
+        fdf = fdf[fdf['Sector'].isin(sel_sectors)]
+    if sel_regions and 'Region' in fdf.columns:
+        fdf = fdf[fdf['Region'].isin(sel_regions)]
+    if sel_risks and 'risk_level' in fdf.columns:
+        fdf = fdf[fdf['risk_level'].isin(sel_risks)]
+    if 'Oracle_Score' in fdf.columns:
+        fdf = fdf[fdf['Oracle_Score'] >= min_score]
 else:
-    filtered_df = df
+    fdf = df
 
-# Main Dashboard
-if not filtered_df.empty:
-    # Key Metrics Row
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Opportunities", len(filtered_df))
-    with col2:
-        high_conviction = len(filtered_df[filtered_df['Oracle_Score'] > 75])
-        st.metric("High Conviction", high_conviction)
-    with col3:
-        undervalued = len(filtered_df[filtered_df['margin_of_safety'] > 20])
-        st.metric("Undervalued Assets", undervalued)
-    with col4:
-        avg_upside = filtered_df[filtered_df['margin_of_safety'] > 0]['margin_of_safety'].mean()
-        st.metric("Avg Upside %", f"{avg_upside:.1f}%" if not pd.isna(avg_upside) else "N/A")
-    with col5:
-        low_risk = len(filtered_df[filtered_df['risk_level'] == 'Low']) if 'risk_level' in filtered_df.columns else 0
-        st.metric("Low Risk Assets", low_risk)
 
-    # Tabs
+# ─────────────────────────────────────────────────────────────────────────────
+# HEADER
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown(
+    '<div class="apex-header">'
+    '  <span class="apex-logo">◈ Apex Markets</span>'
+    '  <span class="apex-sub">GLOBAL INVESTMENT INTELLIGENCE · 500+ ASSETS</span>'
+    '</div>',
+    unsafe_allow_html=True
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KPI BAR  — clickable metrics that reveal ticker lists
+# ─────────────────────────────────────────────────────────────────────────────
+if not fdf.empty:
+    total_opp      = len(fdf)
+    high_conviction_df = fdf[fdf['Oracle_Score'] > 75] if 'Oracle_Score' in fdf.columns else pd.DataFrame()
+    undervalued_df     = fdf[fdf['margin_of_safety'] > 20] if 'margin_of_safety' in fdf.columns else pd.DataFrame()
+    geo_risk_df        = fdf[fdf['Geo_Risk'] == True] if 'Geo_Risk' in fdf.columns else pd.DataFrame()
+    high_risk_df       = fdf[fdf['risk_level'] == 'High'] if 'risk_level' in fdf.columns else pd.DataFrame()
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total Opportunities", total_opp)
+    c2.metric("High Conviction", len(high_conviction_df),
+              help="Oracle Score > 75. Click expander below to see tickers.")
+    c3.metric("Undervalued", len(undervalued_df),
+              help="Margin of Safety > 20%. Click expander below to see tickers.")
+    c4.metric("Geo-Risk Alerts", len(geo_risk_df))
+    c5.metric("High Volatility", len(high_risk_df))
+
+    # Expandable ticker lists below KPI bar
+    def _ticker_chips(subset_df: pd.DataFrame) -> str:
+        chips = "".join(
+            f'<span class="ticker-chip">{t}</span>'
+            for t in sorted(subset_df['Ticker'].tolist())
+        )
+        return f'<div class="ticker-grid">{chips}</div>'
+
+    kpi_col1, kpi_col2, kpi_col3 = st.columns([1, 1, 1])
+    with kpi_col1:
+        if len(high_conviction_df) > 0:
+            with st.expander(f"▸ {len(high_conviction_df)} High Conviction tickers"):
+                st.markdown(_ticker_chips(high_conviction_df), unsafe_allow_html=True)
+    with kpi_col2:
+        if len(undervalued_df) > 0:
+            with st.expander(f"▸ {len(undervalued_df)} Undervalued tickers"):
+                st.markdown(_ticker_chips(undervalued_df), unsafe_allow_html=True)
+    with kpi_col3:
+        if len(geo_risk_df) > 0:
+            with st.expander(f"▸ {len(geo_risk_df)} Geo-Risk tickers"):
+                st.markdown(_ticker_chips(geo_risk_df), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TABS
+    # ─────────────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs([
-        "🎯 The Terminal",
-        "🛡️ Risk Laboratory", 
-        "🔬 Deep Dive Analysis",
-        "📊 Market Intelligence"
+        "◈  Terminal",
+        "⬡  Risk Lab",
+        "◎  Deep Dive",
+        "◻  Market Intel",
     ])
 
-    # TAB 1: THE TERMINAL
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 1 — TERMINAL
+    # ════════════════════════════════════════════════════════════════════════
     with tab1:
-        st.header("🎯 Institutional Investment Terminal")
-        
-        # Sort by Oracle Score
-        terminal_df = filtered_df.sort_values("Oracle_Score", ascending=False)
-        
-        # Display configuration
-        display_cols = [
-            'Ticker', 'Sector', 'Price', 'intrinsic_value', 'margin_of_safety',
-            'RSI', 'Oracle_Score', 'risk_level', 'dcf_confidence'
-        ]
-        
-        available_cols = [col for col in display_cols if col in terminal_df.columns]
-        
-        st.dataframe(
-            terminal_df[available_cols].head(20),
-            column_config={
-                "Price": st.column_config.NumberColumn("Current Price", format="$%.2f"),
-                "intrinsic_value": st.column_config.NumberColumn("Fair Value", format="$%.2f"),
-                "margin_of_safety": st.column_config.NumberColumn(
-                    "Upside %", 
-                    help="Percentage upside to intrinsic value"
-                ),
-                "Oracle_Score": st.column_config.ProgressColumn(
-                    "Oracle Score",
-                    min_value=0,
-                    max_value=100,
-                    format="%d"
-                ),
-                "RSI": st.column_config.NumberColumn("RSI"),
-                "risk_level": st.column_config.TextColumn("Risk"),
-                "dcf_confidence": st.column_config.TextColumn("DCF Quality")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # Top Picks Summary
-        st.subheader("🏆 Top 5 Institutional Picks")
-        top5 = terminal_df.head(5)
-        
-        for _, row in top5.iterrows():
-            with st.expander(f"**{row['Ticker']}** - Oracle Score: {row['Oracle_Score']} | Upside: {row['margin_of_safety']:.1f}%"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Current Price", f"${row['Price']}")
-                    st.metric("Fair Value", f"${row['intrinsic_value']}")
-                    st.metric("Risk Level", row.get('risk_level', 'Unknown'))
-                with col2:
-                    st.write("**AI Analysis:**")
-                    st.write(row.get('AI_Verdict', 'Analysis pending...'))
+        st.markdown("### Investment Terminal")
 
-    # TAB 2: RISK LABORATORY
+        sorted_df = fdf.sort_values("Oracle_Score", ascending=False) if 'Oracle_Score' in fdf.columns else fdf
+
+        display_cols = [c for c in [
+            'Ticker', 'Region', 'Sector', 'Price', 'intrinsic_value',
+            'margin_of_safety', 'RSI', 'Oracle_Score', 'risk_level', 'dcf_confidence'
+        ] if c in sorted_df.columns]
+
+        col_cfg = {}
+        if 'Price' in display_cols:
+            col_cfg['Price'] = st.column_config.NumberColumn("Price", format="$%.2f")
+        if 'intrinsic_value' in display_cols:
+            col_cfg['intrinsic_value'] = st.column_config.NumberColumn("Fair Value", format="$%.2f")
+        if 'margin_of_safety' in display_cols:
+            col_cfg['margin_of_safety'] = st.column_config.NumberColumn("Upside %",
+                help="% gap between current price and DCF intrinsic value. Positive = undervalued.")
+        if 'Oracle_Score' in display_cols:
+            col_cfg['Oracle_Score'] = st.column_config.ProgressColumn(
+                "Oracle Score", min_value=0, max_value=100, format="%d",
+                help="Composite score: Valuation 40% + Technical 30% + Quality 20% + Sentiment 10%")
+        if 'RSI' in display_cols:
+            col_cfg['RSI'] = st.column_config.NumberColumn("RSI",
+                help="Relative Strength Index. <30 = oversold (potential buy). >70 = overbought (caution).")
+        if 'risk_level' in display_cols:
+            col_cfg['risk_level'] = st.column_config.TextColumn("Risk",
+                help="Based on ATR/Price ratio. Low < 2%, Medium 2-5%, High > 5%")
+        if 'dcf_confidence' in display_cols:
+            col_cfg['dcf_confidence'] = st.column_config.TextColumn("DCF Quality",
+                help="High = 4+ years of cash-flow data. Medium = 2-3 years.")
+
+        st.dataframe(
+            sorted_df[display_cols],
+            column_config=col_cfg,
+            use_container_width=True,
+            hide_index=True,
+            height=420,
+        )
+
+        st.markdown("---")
+        st.markdown("### 🏆 Top 5 Picks")
+
+        top5 = sorted_df.head(5)
+        for _, row in top5.iterrows():
+            score_c = score_color(row.get('Oracle_Score', 0))
+            mos_c   = mos_color(row.get('margin_of_safety', 0))
+            label   = f"**{row['Ticker']}** — Oracle {row.get('Oracle_Score', '–')} · Upside {row.get('margin_of_safety', 0):.1f}%"
+
+            with st.expander(label):
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Price",      f"${row.get('Price', 0):.2f}")
+                m2.metric("Fair Value", f"${row.get('intrinsic_value', 0):.2f}" if row.get('intrinsic_value', 0) > 0 else "N/A")
+                m3.metric("RSI",        f"{row.get('RSI', 0):.1f}")
+                m4.metric("Risk",       row.get('risk_level', '–'))
+
+                st.markdown("**AI Verdict**")
+                st.info(row.get('AI_Verdict', 'Analysis pending…'))
+
+                # Mini article feed
+                articles = parse_articles(row.get('Articles_JSON', '[]'))
+                if articles:
+                    st.markdown("**Latest News**")
+                    for a in articles[:3]:
+                        css = article_css_class(a.get('label', 'Neutral'))
+                        badge = article_badge(a.get('label', 'Neutral'))
+                        reasoning_short = a.get('reasoning', '')[:80]
+                        st.markdown(
+                            f'<div class="article-card {css}">'
+                            f'  <div class="article-title">{a["headline"]}</div>'
+                            f'  <div class="article-meta">{badge} &nbsp; {reasoning_short}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 2 — RISK LAB
+    # ════════════════════════════════════════════════════════════════════════
     with tab2:
-        st.header("🛡️ Risk Management Laboratory")
-        
-        # Position Sizing Recommendations
-        st.subheader("📊 Position Sizing Matrix")
-        
-        if 'position_size' in filtered_df.columns and 'daily_volatility' in filtered_df.columns:
-            # Create risk-adjusted position sizing chart
-            fig_positions = px.scatter(
-                filtered_df,
+        st.markdown("### Risk Laboratory")
+        st.caption("How to read this section · **Position Matrix**: each bubble is a stock — bigger bubble = higher Oracle Score. Ideal candidates live in the bottom-left (low volatility, small position). **Heatmap**: green = good opportunity, red = overvalued/risky. **Volatility Distribution**: how spread out daily moves are across your watchlist.")
+
+        # ── 2.1  Position Sizing Matrix ─────────────────────────────────────
+        if {'daily_volatility', 'position_size', 'Oracle_Score', 'risk_level'}.issubset(fdf.columns):
+            st.markdown("#### Position Sizing Matrix")
+            fig_pos = px.scatter(
+                fdf,
                 x='daily_volatility',
                 y='position_size',
                 size='Oracle_Score',
                 color='risk_level',
                 hover_name='Ticker',
-                title="Risk-Adjusted Position Sizing",
+                hover_data={'Oracle_Score': True, 'margin_of_safety': True},
+                color_discrete_map={'Low': '#22c55e', 'Medium': '#f59e0b', 'High': '#ef4444'},
                 labels={
-                    'daily_volatility': 'Daily Volatility %',
-                    'position_size': 'Recommended Position Size %'
+                    'daily_volatility': 'Daily Volatility % (lower = safer)',
+                    'position_size':    'Recommended Position Size %',
                 },
-                color_discrete_map={'Low': 'green', 'Medium': 'orange', 'High': 'red'}
             )
-            st.plotly_chart(fig_positions, use_container_width=True)
-        
-        # Correlation Analysis
-        st.subheader("🔗 Portfolio Correlation Risk")
-        
-        # Create correlation matrix using available numeric columns
-        numeric_cols = ['Price', 'RSI', 'Oracle_Score', 'margin_of_safety']
-        available_numeric = [col for col in numeric_cols if col in filtered_df.columns]
-        
-        if len(available_numeric) > 1 and len(filtered_df) > 5:
-            try:
-                corr_matrix = filtered_df[available_numeric].corr()
-                
-                fig_corr = px.imshow(
-                    corr_matrix.values,
-                    x=corr_matrix.columns,
-                    y=corr_matrix.columns,
-                    text_auto=True,
-                    aspect="auto",
-                    title="Asset Correlation Matrix",
-                    color_continuous_scale="RdBu_r"
-                )
-                st.plotly_chart(fig_corr, use_container_width=True)
-                
-                # Risk Warning
-                high_corr_count = ((corr_matrix.abs() > 0.7).sum().sum() - len(corr_matrix)) // 2
-                if high_corr_count > 0:
-                    st.warning(f"⚠️ **Systemic Risk Alert:** {high_corr_count} high correlation pairs detected")
-            except Exception as e:
-                st.info("Correlation analysis requires more data points")
-        
-        # Volatility Distribution
-        st.subheader("📈 Volatility Distribution")
-        
-        if 'daily_volatility' in filtered_df.columns:
-            fig_vol = px.histogram(
-                filtered_df,
-                x='daily_volatility',
-                nbins=20,
-                title="Portfolio Volatility Distribution",
-                labels={'daily_volatility': 'Daily Volatility %'}
+            fig_pos = plotly_dark_layout(fig_pos)
+            # Quadrant annotations
+            xmax = fdf['daily_volatility'].max() * 1.05
+            ymax = fdf['position_size'].max() * 1.05
+            xmid = fdf['daily_volatility'].median()
+            ymid = fdf['position_size'].median()
+            for ann_text, ax, ay, acolor in [
+                ("✅ Low risk, small size", xmax * 0.05, ymax * 0.1, "#22c55e"),
+                ("⚠️ Low risk, large size", xmax * 0.05, ymax * 0.92, "#f59e0b"),
+                ("🔴 High risk zone", xmax * 0.75, ymax * 0.92, "#ef4444"),
+                ("⚡ Volatile, small size", xmax * 0.75, ymax * 0.1, "#f59e0b"),
+            ]:
+                fig_pos.add_annotation(x=ax, y=ay, text=ann_text, showarrow=False,
+                                       font=dict(size=10, color=acolor), bgcolor="rgba(0,0,0,0.5)",
+                                       borderpad=4)
+            fig_pos.add_vline(x=xmid, line_dash="dot", line_color="#3f3f46")
+            fig_pos.add_hline(y=ymid, line_dash="dot", line_color="#3f3f46")
+            st.plotly_chart(fig_pos, use_container_width=True)
+
+        # ── 2.2  Investment Heatmap ──────────────────────────────────────────
+        st.markdown("#### Opportunity Heatmap")
+        st.caption("Axis: X = Valuation opportunity (higher = more undervalued), Y = Technical momentum (RSI). Bubble size = Oracle Score. **Green zone**: undervalued & not overbought — ideal entries. **Red zone**: overvalued & overbought — caution.")
+
+        if {'RSI', 'margin_of_safety', 'Oracle_Score', 'Sector'}.issubset(fdf.columns):
+            fig_heat = px.scatter(
+                fdf,
+                x='margin_of_safety',
+                y='RSI',
+                size=fdf['Oracle_Score'].clip(lower=5),
+                color='Oracle_Score',
+                hover_name='Ticker',
+                hover_data={'Sector': True, 'Price': True, 'risk_level': True},
+                color_continuous_scale=[(0, "#ef4444"), (0.5, "#f59e0b"), (1, "#22c55e")],
+                range_color=[0, 100],
+                labels={
+                    'margin_of_safety': 'Valuation Upside % →',
+                    'RSI':              'Momentum (RSI)',
+                },
             )
+            fig_heat = plotly_dark_layout(fig_heat)
+            # Zone shading
+            fig_heat.add_shape(type="rect", x0=20, x1=300, y0=0, y1=70,
+                               fillcolor="rgba(34,197,94,0.06)", line_width=0)
+            fig_heat.add_shape(type="rect", x0=-300, x1=0, y0=70, y1=100,
+                               fillcolor="rgba(239,68,68,0.06)", line_width=0)
+            fig_heat.add_hline(y=70, line_dash="dot", line_color="#ef4444",
+                               annotation_text="Overbought (RSI 70)", annotation_position="right",
+                               annotation_font_color="#ef4444")
+            fig_heat.add_hline(y=30, line_dash="dot", line_color="#22c55e",
+                               annotation_text="Oversold (RSI 30)", annotation_position="right",
+                               annotation_font_color="#22c55e")
+            fig_heat.add_vline(x=0, line_dash="dash", line_color="#52525b",
+                               annotation_text="Fair Value", annotation_font_color="#52525b")
+            fig_heat.add_vline(x=20, line_dash="dot", line_color="#22c55e",
+                               annotation_text="20% Upside", annotation_font_color="#22c55e")
+            fig_heat.update_layout(coloraxis_colorbar=dict(
+                title="Oracle Score",
+                tickvals=[0, 25, 50, 75, 100],
+                ticktext=["0 (Poor)", "25", "50", "75", "100 (Best)"],
+                tickfont=dict(color="#71717a"),
+                titlefont=dict(color="#a1a1aa"),
+            ))
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+        # ── 2.3  Volatility Distribution ────────────────────────────────────
+        if 'daily_volatility' in fdf.columns:
+            st.markdown("#### Portfolio Volatility Distribution")
+            st.caption("**How to read**: A left-skewed distribution (mass on the left) means most of your watchlist is low-volatility — good for risk management. The three colour bands show Low / Medium / High risk thresholds.")
+            fig_vol = go.Figure()
+            fig_vol.add_trace(go.Histogram(
+                x=fdf['daily_volatility'],
+                nbinsx=30,
+                marker_color='#3b82f6',
+                opacity=0.7,
+                name="All assets"
+            ))
+            # Colour zones
+            fig_vol.add_vrect(x0=0,   x1=2,   fillcolor="rgba(34,197,94,0.08)",  line_width=0,
+                              annotation_text="Low Risk", annotation_position="top left",
+                              annotation_font_color="#22c55e")
+            fig_vol.add_vrect(x0=2,   x1=5,   fillcolor="rgba(245,158,11,0.08)", line_width=0,
+                              annotation_text="Medium Risk", annotation_position="top left",
+                              annotation_font_color="#f59e0b")
+            fig_vol.add_vrect(x0=5,   x1=100, fillcolor="rgba(239,68,68,0.08)",  line_width=0,
+                              annotation_text="High Risk", annotation_position="top left",
+                              annotation_font_color="#ef4444")
+            fig_vol.update_layout(
+                xaxis_title="Daily Volatility %  (ATR / Price × 100)",
+                yaxis_title="Number of Assets",
+                bargap=0.05,
+            )
+            fig_vol = plotly_dark_layout(fig_vol)
             st.plotly_chart(fig_vol, use_container_width=True)
 
-    # TAB 3: DEEP DIVE
+            # Quick legend
+            lc1, lc2, lc3 = st.columns(3)
+            low_n  = len(fdf[fdf['daily_volatility'] < 2])  if 'daily_volatility' in fdf.columns else 0
+            med_n  = len(fdf[(fdf['daily_volatility'] >= 2) & (fdf['daily_volatility'] < 5)]) if 'daily_volatility' in fdf.columns else 0
+            high_n = len(fdf[fdf['daily_volatility'] >= 5]) if 'daily_volatility' in fdf.columns else 0
+            lc1.metric("🟢 Low Risk (<2%)",   low_n,  help="Moves less than 2% per day on average")
+            lc2.metric("🟡 Medium Risk (2-5%)", med_n, help="Moderate daily swings, manageable with sizing")
+            lc3.metric("🔴 High Risk (>5%)",  high_n, help="Highly volatile — reduce position size accordingly")
+
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 3 — DEEP DIVE
+    # ════════════════════════════════════════════════════════════════════════
     with tab3:
-        st.header("🔬 Deep Dive Analysis")
-        
-        ticker_list = filtered_df['Ticker'].tolist()
+        st.markdown("### Deep Dive")
+
+        ticker_list = sorted(fdf['Ticker'].tolist()) if not fdf.empty else []
         if ticker_list:
-            selected_ticker = st.selectbox("Select Asset for Analysis:", ticker_list)
-            
-            if selected_ticker:
-                row = filtered_df[filtered_df['Ticker'] == selected_ticker].iloc[0]
-                
-                # Key Metrics
-                col1, col2, col3, col4, col5 = st.columns(5)
-                col1.metric("Current Price", f"${row['Price']}")
-                col2.metric("Fair Value", f"${row['intrinsic_value']}")
-                col3.metric("Upside", f"{row['margin_of_safety']:.1f}%")
-                col4.metric("Oracle Score", f"{row['Oracle_Score']}")
-                col5.metric("Risk Level", row.get('risk_level', 'Unknown'))
-                
-                # Valuation Football Field Chart
-                st.subheader("⚽ Valuation Football Field")
-                
-                current_price = row['Price']
-                fair_value = row['intrinsic_value']
-                
-                if fair_value > 0:
-                    fig_football = go.Figure()
-                    
-                    # Add ranges
-                    fig_football.add_shape(
-                        type="rect", x0=0, x1=1, y0=fair_value*0.8, y1=fair_value*1.2,
-                        fillcolor="lightgreen", opacity=0.3, line_width=0
-                    )
-                    fig_football.add_shape(
-                        type="rect", x0=0, x1=1, y0=fair_value*0.6, y1=fair_value*0.8,
-                        fillcolor="lightblue", opacity=0.3, line_width=0
-                    )
-                    fig_football.add_shape(
-                        type="rect", x0=0, x1=1, y0=fair_value*1.2, y1=fair_value*1.4,
-                        fillcolor="lightyellow", opacity=0.3, line_width=0
-                    )
-                    
-                    # Add current price line
-                    fig_football.add_hline(
-                        y=current_price, 
-                        line_dash="dash", 
-                        line_color="red", 
-                        annotation_text=f"Current: ${current_price}"
-                    )
-                    
-                    # Add fair value line
-                    fig_football.add_hline(
-                        y=fair_value, 
-                        line_color="blue", 
-                        annotation_text=f"Fair Value: ${fair_value}"
-                    )
-                    
-                    fig_football.update_layout(
-                        title=f"{selected_ticker} - Valuation Analysis",
-                        xaxis_title="",
-                        yaxis_title="Price ($)",
-                        showlegend=False,
-                        height=400
-                    )
-                    
-                    fig_football.update_xaxis(showticklabels=False)
-                    
-                    st.plotly_chart(fig_football, use_container_width=True)
-                else:
-                    st.warning("DCF valuation not available for this asset")
-                
-                # LLM Analysis
-                st.subheader("🤖 AI Investment Thesis")
-                if 'LLM_Reasoning' in row and row['LLM_Reasoning']:
-                    st.success(f"**AI Analysis:** {row['LLM_Reasoning']}")
-                else:
-                    st.info("AI analysis pending...")
-                
-                # Risk Assessment
-                st.subheader("⚡ Risk Profile")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.metric("Position Size Rec.", f"{row.get('position_size', 0)}%")
-                    st.metric("Daily Volatility", f"{row.get('daily_volatility', 0)}%")
-                    
-                with col2:
-                    if 'short_interest' in row:
-                        st.metric("Short Interest", f"{row['short_interest']}%")
-                    if 'Geo_Risk' in row and row['Geo_Risk']:
-                        st.error("🌍 Geopolitical Risk Detected")
-                
-                # News Analysis
-                st.subheader("📰 Latest Intelligence")
-                if 'Headline' in row:
-                    st.write(f"*{row['Headline']}*")
-                
-                # External Link
-                st.markdown(f"[📊 View on Yahoo Finance](https://finance.yahoo.com/quote/{selected_ticker})")
+            selected_ticker = st.selectbox("Select asset", ticker_list)
 
-    # TAB 4: MARKET INTELLIGENCE
+            row = fdf[fdf['Ticker'] == selected_ticker].iloc[0]
+
+            # ── Key metrics row ─────────────────────────────────────────────
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.metric("Price",       f"${row['Price']:.2f}")
+            m2.metric("Fair Value",  f"${row['intrinsic_value']:.2f}" if row.get('intrinsic_value', 0) > 0 else "N/A",
+                      help="DCF intrinsic value per share")
+            m3.metric("Upside %",    f"{row.get('margin_of_safety', 0):.1f}%",
+                      help="Positive = undervalued vs intrinsic value")
+            m4.metric("Oracle Score", f"{row.get('Oracle_Score', 0):.0f}")
+            m5.metric("RSI",          f"{row.get('RSI', 0):.1f}",
+                      help="<30 oversold, >70 overbought")
+            m6.metric("Risk",         row.get('risk_level', '–'))
+
+            st.markdown("---")
+
+            # ── Valuation Football Field ─────────────────────────────────────
+            st.markdown("#### Valuation Football Field")
+            st.caption("Shows where the current price sits relative to DCF-derived valuation bands. **Green band** = fair value ±20%. Dashed red line = today's price. Blue line = intrinsic value.")
+
+            iv = row.get('intrinsic_value', 0)
+            cp = row.get('Price', 0)
+
+            if iv > 0:
+                fig_ff = go.Figure()
+                bands = [
+                    (iv * 0.5,  iv * 0.8,  "rgba(59,130,246,0.10)", "Deep Value Zone"),
+                    (iv * 0.8,  iv * 1.2,  "rgba(34,197,94,0.15)",  "Fair Value Zone"),
+                    (iv * 1.2,  iv * 1.5,  "rgba(245,158,11,0.10)", "Premium Zone"),
+                    (iv * 1.5,  iv * 2.0,  "rgba(239,68,68,0.08)",  "Overvalued Zone"),
+                ]
+                for y0, y1, color, name in bands:
+                    fig_ff.add_shape(type="rect", x0=0, x1=1,
+                                     y0=y0, y1=y1,
+                                     fillcolor=color, line_width=0)
+                    fig_ff.add_annotation(x=0.98, y=(y0 + y1) / 2, text=name,
+                                          showarrow=False, xanchor="right",
+                                          font=dict(size=10, color="#71717a"))
+
+                fig_ff.add_hline(y=cp, line_dash="dash", line_color="#ef4444", line_width=2,
+                                 annotation_text=f"Current  ${cp:.2f}",
+                                 annotation_font_color="#ef4444", annotation_position="right")
+                fig_ff.add_hline(y=iv, line_color="#3b82f6", line_width=1.5,
+                                 annotation_text=f"Intrinsic  ${iv:.2f}",
+                                 annotation_font_color="#3b82f6", annotation_position="right")
+
+                fig_ff.update_layout(
+                    height=380,
+                    showlegend=False,
+                    xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis_title="Price ($)",
+                )
+                fig_ff = plotly_dark_layout(fig_ff)
+                st.plotly_chart(fig_ff, use_container_width=True)
+            else:
+                st.info("DCF valuation not available — the company may not have sufficient cash-flow history (requires ≥ 2 years of financial statements).")
+
+            # ── Multi-article news feed ────────────────────────────────────
+            st.markdown("#### Latest News Intelligence")
+            st.caption("Up to 5 recent headlines with AI sentiment labels and one-line summaries.")
+
+            articles = parse_articles(row.get('Articles_JSON', '[]'))
+            if articles:
+                for a in articles:
+                    css   = article_css_class(a.get('label', 'Neutral'))
+                    badge = article_badge(a.get('label', 'Neutral'))
+                    score_txt = f"{a.get('score', 0):+.2f}"
+                    pub   = a.get('pub_date', '')[:16]
+                    st.markdown(
+                        f'<div class="article-card {css}">'
+                        f'  <div class="article-title">{a["headline"]}</div>'
+                        f'  <div class="article-meta">'
+                        f'    {badge} &nbsp; <span style="color:#52525b">{pub}</span>'
+                        f'    &nbsp;·&nbsp; <span style="color:#a1a1aa">{a.get("reasoning","")}</span>'
+                        f'    &nbsp;·&nbsp; <span style="font-family:DM Mono;color:#3b82f6">score {score_txt}</span>'
+                        f'  </div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.caption("No article data — run a fresh scan to populate.")
+
+            # ── Risk profile ────────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### Risk Profile")
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("Position Size Rec.", f"{row.get('position_size', 0):.1f}%",
+                      help="Max % of $100k portfolio to allocate based on 2× ATR stop-loss")
+            r2.metric("Daily Volatility",   f"{row.get('daily_volatility', 0):.2f}%",
+                      help="ATR as % of price — a proxy for daily expected move")
+            r3.metric("Short Interest",     f"{row.get('short_interest', 0):.1f}%",
+                      help="% of float sold short. >15% = bearish pressure")
+            r4.metric("Insider Sentiment",  row.get('insider_sentiment', '–'))
+
+            if row.get('Geo_Risk', False):
+                st.warning("🌍 Geopolitical risk detected in recent news headlines.")
+
+            st.markdown(f"[Open on Yahoo Finance ↗](https://finance.yahoo.com/quote/{selected_ticker})", unsafe_allow_html=False)
+
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TAB 4 — MARKET INTEL
+    # ════════════════════════════════════════════════════════════════════════
     with tab4:
-        st.header("📊 Market Intelligence Dashboard")
-        
-        # Sector Performance
-        st.subheader("🏭 Sector Analysis")
-        
-        if 'Sector' in filtered_df.columns:
-            sector_analysis = filtered_df.groupby('Sector').agg({
-                'Oracle_Score': 'mean',
-                'margin_of_safety': 'mean',
-                'RSI': 'mean',
-                'Ticker': 'count'
-            }).round(2)
-            sector_analysis.columns = ['Avg Oracle Score', 'Avg Upside %', 'Avg RSI', 'Count']
-            
-            st.dataframe(sector_analysis, use_container_width=True)
-            
-            # Sector Performance Chart
-            fig_sector = px.scatter(
-                filtered_df,
-                x='RSI',
-                y='margin_of_safety',
-                color='Sector',
-                size='Oracle_Score',
-                hover_name='Ticker',
-                title="Sector Positioning: Value vs Momentum",
-                labels={
-                    'RSI': 'Technical Momentum (RSI)',
-                    'margin_of_safety': 'Value Opportunity (Upside %)'
-                }
+        st.markdown("### Market Intelligence")
+
+        # ── Sector summary table ────────────────────────────────────────────
+        if 'Sector' in fdf.columns:
+            st.markdown("#### Sector Breakdown")
+            agg_cols = {k: 'mean' for k in ['Oracle_Score', 'margin_of_safety', 'RSI', 'daily_volatility'] if k in fdf.columns}
+            agg_cols['Ticker'] = 'count'
+            sector_agg = fdf.groupby('Sector').agg(agg_cols).round(1).rename(columns={'Ticker': 'Count'})
+            st.dataframe(sector_agg, use_container_width=True)
+
+        # ── Region breakdown ────────────────────────────────────────────────
+        if 'Region' in fdf.columns and 'Oracle_Score' in fdf.columns:
+            st.markdown("#### Region vs Oracle Score")
+            fig_region = px.box(
+                fdf, x='Region', y='Oracle_Score', color='Region',
+                color_discrete_sequence=['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444'],
+                labels={'Oracle_Score': 'Oracle Score', 'Region': 'Region'},
             )
-            
-            # Add quadrant lines
-            fig_sector.add_hline(y=0, line_dash="dash", line_color="gray")
-            fig_sector.add_vline(x=50, line_dash="dash", line_color="gray")
-            
-            st.plotly_chart(fig_sector, use_container_width=True)
-        
-        # Market Sentiment Overview
-        st.subheader("🌡️ Market Sentiment")
-        
-        if 'Sentiment' in filtered_df.columns:
-            avg_sentiment = filtered_df['Sentiment'].mean()
-            sentiment_color = "green" if avg_sentiment > 0 else "red"
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Market Sentiment", f"{avg_sentiment:.2f}", delta="Bullish" if avg_sentiment > 0 else "Bearish")
-            
-            if 'Geo_Risk' in filtered_df.columns:
-                geo_risk_count = filtered_df['Geo_Risk'].sum()
-                col2.metric("Geopolitical Alerts", geo_risk_count)
-            
-            high_conviction_pct = (len(filtered_df[filtered_df['Oracle_Score'] > 75]) / len(filtered_df)) * 100
-            col3.metric("High Conviction %", f"{high_conviction_pct:.1f}%")
+            fig_region = plotly_dark_layout(fig_region)
+            fig_region.update_layout(showlegend=False)
+            st.plotly_chart(fig_region, use_container_width=True)
 
+        # ── Value vs Momentum scatter (all stocks) ────────────────────────
+        if {'RSI', 'margin_of_safety', 'Oracle_Score', 'Sector'}.issubset(fdf.columns):
+            st.markdown("#### Value vs Momentum — Full Universe")
+            st.caption("**Ideal zone**: right side (undervalued) + below RSI 70 (not overbought). Bubble size = Oracle Score.")
+            fig_vm = px.scatter(
+                fdf,
+                x='margin_of_safety',
+                y='RSI',
+                size=fdf['Oracle_Score'].clip(lower=5),
+                color='Sector',
+                hover_name='Ticker',
+                labels={'margin_of_safety': 'Valuation Upside %', 'RSI': 'Momentum (RSI)'},
+            )
+            fig_vm.add_hline(y=70, line_dash="dot", line_color="#ef4444",
+                             annotation_text="Overbought", annotation_font_color="#ef4444")
+            fig_vm.add_hline(y=30, line_dash="dot", line_color="#22c55e",
+                             annotation_text="Oversold", annotation_font_color="#22c55e")
+            fig_vm.add_vline(x=0,  line_dash="dash", line_color="#52525b")
+            fig_vm = plotly_dark_layout(fig_vm)
+            st.plotly_chart(fig_vm, use_container_width=True)
+
+        # ── Sentiment overview ────────────────────────────────────────────
+        if 'Sentiment' in fdf.columns:
+            st.markdown("#### Sentiment Overview")
+            avg_sent = fdf['Sentiment'].mean()
+            sc1, sc2, sc3 = st.columns(3)
+            sc1.metric("Average Sentiment", f"{avg_sent:.3f}",
+                       delta="Bullish leaning" if avg_sent > 0 else "Bearish leaning")
+            if 'Geo_Risk' in fdf.columns:
+                sc2.metric("Geo-Risk Count", int(fdf['Geo_Risk'].sum()),
+                           help="Assets with geopolitical keywords in recent headlines")
+            if 'Oracle_Score' in fdf.columns:
+                hc_pct = len(fdf[fdf['Oracle_Score'] > 75]) / max(len(fdf), 1) * 100
+                sc3.metric("High Conviction %", f"{hc_pct:.1f}%")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EMPTY STATE
+# ─────────────────────────────────────────────────────────────────────────────
 else:
-    # Empty State
-    st.info("👋 **Welcome to the Institutional Investment Command Center**")
-    st.write("Click **'Execute Full Market Scan'** in the sidebar to begin analysis.")
-    
     st.markdown("""
-    ### 🏛️ System Capabilities:
-    - **DCF Valuation Engine**: Automated intrinsic value calculations
-    - **LLM News Analysis**: AI-powered sentiment and risk detection  
-    - **Risk Management**: Volatility-based position sizing
-    - **Alternative Data**: Short interest and insider sentiment
-    - **Correlation Analysis**: Portfolio systemic risk monitoring
-    """)
+    <div style="max-width:520px;margin:80px auto;text-align:center;">
+      <div style="font-size:48px;margin-bottom:16px;">◈</div>
+      <h2 style="color:#f4f4f5;font-size:22px;font-weight:700;margin-bottom:8px;">Welcome to Apex Markets</h2>
+      <p style="color:#71717a;font-size:14px;line-height:1.6;">
+        Global investment intelligence across 500+ assets.<br>
+        Press <strong style="color:#3b82f6">⟳ Run Global Scan</strong> in the sidebar to begin.
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.markdown("*Institutional Investment Engine v2.0*")
-if not df.empty:
-    last_update = df['Last_Updated'].iloc[0] if 'Last_Updated' in df.columns else "Unknown"
-    st.sidebar.caption(f"Last Update: {last_update}")
+    c1, c2, c3, c4 = st.columns(4)
+    for col, icon, title, desc in [
+        (c1, "◎", "DCF Engine",       "Intrinsic value from real cash-flow data"),
+        (c2, "◈", "LLM News",         "5 articles per stock with sentiment scoring"),
+        (c3, "⬡", "Risk Manager",     "ATR-based position sizing & volatility maps"),
+        (c4, "◻", "500+ Stocks",      "US, Europe, Asia, EM — all in one scan"),
+    ]:
+        col.markdown(
+            f'<div style="background:#111113;border:1px solid #27272a;border-radius:12px;'
+            f'padding:20px;text-align:center;">'
+            f'<div style="font-size:28px;margin-bottom:8px;color:#3b82f6">{icon}</div>'
+            f'<div style="font-weight:600;color:#e4e4e7;font-size:13px">{title}</div>'
+            f'<div style="color:#52525b;font-size:11px;margin-top:4px">{desc}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
