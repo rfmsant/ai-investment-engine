@@ -2,50 +2,61 @@ import pandas as pd
 from logic import InvestmentEngine
 import requests
 import json
+import time
 
 # Configuration
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1478181689095360665/kI0vRkzbjcrn4MaqIICJ2v_uyKl1H_9B-4S2bq1IDNHMa8h6X05zN2fpX-iGJxJVGBvd"
 
 def send_enhanced_discord_alert(df):
-    """Enhanced Discord alert with institutional metrics"""
+    """Institutional brief for Discord - Fast, short, and actionable"""
     if df.empty:
         return
 
-    # Get top picks
+    # 1. IDENTIFY THE HOTTEST STOCKS (Highest Oracle Score)
     top_picks = df.sort_values("Oracle_Score", ascending=False).head(3)
     
-    # Market summary
-    avg_oracle = df['Oracle_Score'].mean()
-    undervalued_count = len(df[df['margin_of_safety'] > 20])
-    high_risk_count = len(df[df['risk_level'] == 'High'])
+    # 2. MARKET STATS
+    avg_score = df['Oracle_Score'].mean()
+    value_deals = len(df[df['margin_of_safety'] > 20])
     
-    message = "🏛️ **INSTITUTIONAL MARKET INTELLIGENCE REPORT**\n"
-    message += f"📊 Market Summary: Avg Oracle Score: {avg_oracle:.1f} | Undervalued Assets: {undervalued_count} | High Risk: {high_risk_count}\n\n"
-    message += "🎯 **TOP CONVICTION PLAYS:**\n"
+    # 3. BUILD THE MESSAGE
+    message = "🏛️ **APEX PRO: INSTITUTIONAL BRIEF**\n"
+    message += f"📊 **Pulse:** Market Score {avg_score:.0f}/100 | {value_deals} Deep Value Opportunities detected.\n\n"
+    message += "🔥 **HOTTEST CONVICTION PLAYS:**\n"
     
     for i, (_, row) in enumerate(top_picks.iterrows(), 1):
-        upside = row.get('margin_of_safety', 0)
-        risk = row.get('risk_level', 'Unknown')
+        ticker = row['Ticker']
+        score = row['Oracle_Score']
+        upside = row['margin_of_safety']
+        price = row['Price']
         
-        message += f"\n**#{i} {row['Ticker']}** | Score: {row['Oracle_Score']} | Risk: {risk}\n"
-        message += f"   💰 Current: ${row['Price']} | Fair Value: ${row.get('intrinsic_value', 0)}\n"
-        message += f"   📈 Upside: {upside:.1f}% | RSI: {row['RSI']}\n"
-        
-        # Add key insight
-        if 'LLM_Reasoning' in row and row['LLM_Reasoning']:
-            reasoning = row['LLM_Reasoning'][:100] + "..." if len(row['LLM_Reasoning']) > 100 else row['LLM_Reasoning']
-            message += f"   🤖 AI: {reasoning}\n"
+        # Get the quickest news summary from our JSON logic
+        news_brief = "No recent wire data."
+        try:
+            news_items = json.loads(row['Articles_JSON'])
+            if news_items:
+                # Take the first headline and its summary
+                top_story = news_items[0]
+                headline = top_story['headline'][:60]
+                summary = top_story['reason'][:100]
+                news_brief = f"*{headline}* — {summary}..."
+        except:
+            pass
+            
+        message += f"**{i}. {ticker}** (Score: {score} | Upside: {upside:.1f}%)\n"
+        message += f"   💰 Price: ${price} | Risk: {row['risk_level']}\n"
+        message += f"   📰 Brief: {news_brief}\n\n"
     
-    # Add risk warnings
-    if high_risk_count > len(df) * 0.5:
-        message += "\n⚠️ **RISK ALERT:** High volatility market conditions detected"
+    # 4. GEO-RISK / SYSTEM WARNING
+    geo_warnings = 0
+    for _, row in df.iterrows():
+        if "war" in str(row['Articles_JSON']).lower() or "tension" in str(row['Articles_JSON']).lower():
+            geo_warnings += 1
+            
+    if geo_warnings > 5:
+        message += f"⚠️ **MACRO ALERT:** Elevated Geopolitical signals detected in {geo_warnings} sectors.\n"
     
-    # Add geopolitical warnings
-    geo_risks = df['Geo_Risk'].sum() if 'Geo_Risk' in df.columns else 0
-    if geo_risks > 0:
-        message += f"\n🌍 **MACRO ALERT:** {geo_risks} assets with geopolitical exposure"
-    
-    message += "\n\n*Powered by Institutional Investment Engine v2.0*"
+    message += "\n*Powered by Apex Markets Pro v6.5*"
     
     payload = {"content": message}
     
@@ -54,7 +65,7 @@ def send_enhanced_discord_alert(df):
             DISCORD_WEBHOOK_URL, 
             data=json.dumps(payload), 
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=15
         )
         return response.status_code == 204
     except Exception as e:
@@ -62,40 +73,34 @@ def send_enhanced_discord_alert(df):
         return False
 
 def run_headless_update():
-    """Enhanced headless update with institutional metrics"""
-    print("🏛️ Starting institutional market scan...")
+    """Run the institutional scan and alert Discord"""
+    print("◈ Starting Apex Market Intelligence Scan...")
     
     try:
         engine = InvestmentEngine()
         
-        # Fetch comprehensive data
+        # This will scan your full universe (~100+ stocks)
         df = engine.fetch_market_data()
         
         if df.empty:
-            print("❌ No data retrieved")
+            print("❌ No data retrieved from market.")
             return
         
-        print(f"✅ Analyzed {len(df)} assets")
+        print(f"✅ Analysis complete for {len(df)} assets.")
         
-        # Send Discord alert
+        # Send to Discord
         success = send_enhanced_discord_alert(df)
         
         if success:
-            print("📱 Discord notification sent successfully")
+            print("📱 Intelligence Brief sent to Discord.")
         else:
-            print("❌ Discord notification failed")
-            
-        # Print top picks to console
-        print("\n🎯 TOP 3 INSTITUTIONAL PICKS:")
-        top_picks = df.sort_values("Oracle_Score", ascending=False).head(3)
-        for _, row in top_picks.iterrows():
-            print(f"{row['Ticker']}: Score {row['Oracle_Score']}, Upside {row.get('margin_of_safety', 0):.1f}%")
+            print("❌ Discord communication failed.")
             
     except Exception as e:
-        print(f"❌ Update failed: {e}")
-        # Send error notification
-        error_payload = {"content": f"🚨 **SYSTEM ERROR**: Market scan failed - {str(e)[:200]}"}
-        requests.post(DISCORD_WEBHOOK_URL, data=json.dumps(error_payload), headers={"Content-Type": "application/json"})
+        print(f"❌ Critical System Failure: {e}")
+        # Send emergency error to Discord
+        err_msg = {"content": f"🚨 **SYSTEM FAILURE**: Market scan crashed - {str(e)[:150]}"}
+        requests.post(DISCORD_WEBHOOK_URL, json=err_msg)
 
 if __name__ == "__main__":
     run_headless_update()
