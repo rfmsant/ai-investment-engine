@@ -220,7 +220,7 @@ _EMPTY_DCF = {
 }
 
 
-def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10) -> Dict:
+def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10, ticker: str = "") -> Dict:
     """
     DCF valuation using only stock.info - works on ALL yfinance versions.
 
@@ -240,6 +240,7 @@ def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10) -> Dict:
             return {**_EMPTY_DCF, "dcf_method": "skipped_no_earnings"}
 
         # --- Step 1: find best available FCF figure ---
+        # Priority: freeCashflow from info (TTM, already calculated by Yahoo)
         fcf    = _safe(info.get("freeCashflow"))
         method = "ttm_fcf"
 
@@ -248,8 +249,7 @@ def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10) -> Dict:
             method = "ttm_ocf"
 
         if fcf == 0.0:
-            # Use EPS * shares as earnings proxy
-            eps    = _safe(info.get("trailingEps"))
+            eps        = _safe(info.get("trailingEps"))
             shares_tmp = _safe(info.get("sharesOutstanding") or
                                info.get("impliedSharesOutstanding"))
             if eps > 0 and shares_tmp > 0:
@@ -259,13 +259,36 @@ def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10) -> Dict:
         if fcf <= 0:
             return {**_EMPTY_DCF, "dcf_method": "no_cashflow_in_info"}
 
-        # --- Step 2: growth rate from analyst estimates ---
-        rev_g = _safe(info.get("revenueGrowth"),  0.05)
-        ear_g = _safe(info.get("earningsGrowth"), 0.05)
+        # --- Step 2: growth rate ---
+        # First try historical CAGR from cashflow statement (more reliable)
+        # Row name confirmed as "Free Cash Flow" in yfinance 1.2.0
+        growth_rate = None
+        try:
+            stock_obj = yf.Ticker(ticker or info.get("symbol", ""))
+            for cf_attr in ("cashflow", "cash_flow"):
+                cf_df = getattr(stock_obj, cf_attr, None)
+                if cf_df is not None and not cf_df.empty and "Free Cash Flow" in cf_df.index:
+                    fcf_series = cf_df.loc["Free Cash Flow"].dropna()
+                    fcf_series = pd.to_numeric(fcf_series, errors="coerce").dropna()
+                    fcf_series = fcf_series[fcf_series > 0].sort_index(ascending=False)
+                    if len(fcf_series) >= 3:
+                        newest = float(fcf_series.iloc[0])
+                        oldest = float(fcf_series.iloc[-1])
+                        yrs    = len(fcf_series) - 1
+                        raw    = (newest / oldest) ** (1.0 / yrs) - 1
+                        growth_rate = max(-0.20, min(0.35, raw))
+                        method = method + "+hist_cagr"
+                    break
+        except Exception:
+            pass
 
-        # Weighted blend, clamp to realistic range
-        growth_rate = rev_g * 0.4 + ear_g * 0.6
-        growth_rate = max(-0.20, min(0.35, growth_rate))
+        if growth_rate is None:
+            # Fall back to analyst forward estimates
+            rev_g = _safe(info.get("revenueGrowth"),  0.05)
+            ear_g = _safe(info.get("earningsGrowth"), 0.05)
+            growth_rate = rev_g * 0.4 + ear_g * 0.6
+            growth_rate = max(-0.20, min(0.35, growth_rate))
+
         if growth_rate == 0.0:
             growth_rate = 0.05
 
@@ -365,21 +388,40 @@ def _calc_atr(high: pd.Series, low: pd.Series,
 GEO_WORDS = [
     "war", "china", "tariff", "sanction", "supply chain", "ban", "strike",
     "geopolit", "regulat", "opec", "trade war", "embargo", "conflict",
-    "nato", "russia", "ukraine", "middle east",
+    "nato", "russia", "ukraine", "middle east", "iran", "north korea",
+    "export control", "import duty", "trade restriction", "retaliatory",
 ]
 
+# Finance-specific positive signals (broad enough for real headline language)
 POS_WORDS = [
-    "beat", "exceed", "record", "growth", "surge", "rally", "upgrade",
+    "beat", "beats", "topped", "exceed", "exceeded", "surpass", "record",
+    "growth", "surge", "surged", "rally", "rallied", "upgrade", "upgraded",
     "profit", "revenue", "dividend", "buyback", "deal", "partnership",
-    "breakthrough", "outperform", "raises guidance", "wins", "expands",
-    "launches", "approval", "acquires", "strong earnings",
+    "breakthrough", "outperform", "raises guidance", "guidance raise",
+    "wins", "win", "expands", "launches", "approval", "approved",
+    "acquires", "acquisition", "rebound", "bullish", "buy rating",
+    "price target raised", "strong", "robust", "accelerat", "momentum",
+    "reward", "reaps", "rewards", "compound", "compounding", "upside",
+    "positive", "gain", "gained", "jumped", "soar", "soared", "climbed",
+    "rose", "rising", "teams up", "collaboration", "alliance", "boosts",
+    "recovery", "recover", "record quarter", "market share", "raised forecast",
+    "exceed expectations", "strong quarter", "returning value",
 ]
 
+# Finance-specific negative signals
 NEG_WORDS = [
-    "miss", "decline", "loss", "cut", "probe", "lawsuit", "downgrade",
-    "warn", "fall", "drop", "layoff", "recall", "fine", "investigation",
-    "ban", "tariff", "sanction", "bankrupt", "fraud", "subpoena",
-    "misses estimates", "reduces outlook", "delays",
+    "miss", "misses", "missed", "decline", "declined", "loss", "losses",
+    "cut", "cuts", "probe", "lawsuit", "downgrade", "downgraded",
+    "warn", "warning", "fall", "falls", "drop", "dropped", "layoff",
+    "layoffs", "recall", "fine", "fined", "investigation", "ban", "banned",
+    "tariff", "sanction", "bankrupt", "bankruptcy", "fraud", "subpoena",
+    "struggle", "struggles", "struggling", "concern", "concerns",
+    "dependence", "dependent", "reliance", "vulnerable", "slowdown",
+    "weak", "weaker", "disappoints", "disappointing", "below expectations",
+    "guidance cut", "revenue miss", "earnings miss", "sell rating",
+    "price target cut", "headwind", "headwinds", "underperform",
+    "pressure", "pressured", "fell", "slump", "slumping",
+    "worries", "threat", "threats", "halt", "halted", "suspended", "delays",
 ]
 
 
@@ -687,7 +729,7 @@ class InvestmentEngine:
                 pm       = _safe(info.get("profitMargins"))    * 100
                 sector   = self._meta(ticker, "Sector", "Unknown")
 
-                dcf = calc_dcf(info, sector=sector)
+                dcf = calc_dcf(info, sector=sector, ticker=ticker)
 
                 # Log DCF result for first few tickers
                 if i < 5:
