@@ -6,3 +6,4 @@ openai
 textblob
 numpy
 requests
+lxml
