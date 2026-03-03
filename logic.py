@@ -21,32 +21,34 @@ def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str
     try:
         client = OpenAI(api_key=api_key)
         
-        # Prepare news summary safely
+        # Prepare news summary
         if news and len(news) > 0:
-            news_summary = "\n".join([f"- {n['headline']} ({n['label']})" for n in news[:5]])
+            news_summary = "\n".join([f"- {n['headline']} (Sentiment: {n['label']})" for n in news[:5]])
         else:
-            news_summary = "No recent specific news found."
+            news_summary = "No specific news headlines found. Rely on fundamental data."
         
         prompt = f"""
         Act as a senior financial analyst for 'The Motley Fool'. 
-        Analyze {ticker} based on the data below.
+        Perform a Deep Dive analysis on {ticker} based on this data:
         
-        FINANCIALS:
-        - Price: ${data.get('Price')}
-        - DCF Fair Value: ${data.get('intrinsic_value')} (Upside: {data.get('margin_of_safety')}%)
-        - Growth Estimate: {data.get('growth_rate')}%
-        - RSI: {data.get('RSI')}
+        --- DATA DASHBOARD ---
+        Price: ${data.get('Price')}
+        Fair Value (DCF): ${data.get('intrinsic_value')}
+        Upside Potential: {data.get('margin_of_safety')}%
+        Growth Est: {data.get('growth_rate')}%
+        RSI (Momentum): {data.get('RSI')}
         
-        RECENT NEWS HEADLINES:
+        --- LATEST NEWS CYCLE ---
         {news_summary}
         
-        OUTPUT FORMAT (Markdown):
-        1. **The Elevator Pitch**: 2 sentences on the business model.
-        2. **The Bull Case** (3 bullet points): Focus on moats, growth, and margins.
-        3. **The Bear Case** (3 bullet points): Focus on valuation, debt, and risks.
-        4. **The Verdict**: A definitive "BUY", "HOLD", or "SELL" with a 1-sentence rationale.
+        --- TASK ---
+        Write a concise investment memo (Markdown).
+        1. **The Elevator Pitch**: What does the company do and why is it interesting NOW? (2 sentences).
+        2. **The Bull Case** (3 bullet points): Focus on competitive advantage (moat) and growth.
+        3. **The Bear Case** (3 bullet points): Focus on valuation risks and headwinds.
+        4. **The Verdict**: Start with "BUY", "SELL", or "HOLD". Explain why in 1 sentence.
         
-        Tone: Professional, insightful, direct.
+        Tone: Enthusiastic but cautious, professional, long-term mindset.
         """
 
         response = client.chat.completions.create(
@@ -59,23 +61,34 @@ def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str
         return f"⚠️ Error generating AI report: {str(e)}"
 
 # ===========================================================================
-# 2. ROBUST NEWS FETCHING (GOOGLE RSS)
+# 2. NEWS FETCHING (FIXED WITH HEADERS)
 # ===========================================================================
 def fetch_news(ticker: str) -> List[Dict]:
     articles = []
+    
+    # 1. Try Google News RSS with Browser Headers (Bypasses blocking)
     try:
-        # Use Google News RSS instead of yfinance (more reliable on Cloud)
-        url = f"https://news.google.com/rss/search?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en"
-        response = requests.get(url, timeout=5)
+        url = f"https://news.google.com/rss/search?q={ticker}+stock+when:7d&hl=en-US&gl=US&ceid=US:en"
+        
+        # HEADERS ARE CRITICAL - This makes the script look like a Chrome Browser
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
             root = ET.fromstring(response.content)
-            # Iterate through items in the RSS feed
-            for item in root.findall('./channel/item')[:5]:
+            items = root.findall('./channel/item')
+            
+            for item in items[:5]: # Top 5 stories
                 title = item.find('title').text
                 link = item.find('link').text
                 
-                # Sentiment Analysis
+                # Basic cleanup
+                title = title.replace(" - Yahoo Finance", "").replace(" - Motley Fool", "")
+                
+                # Sentiment
                 blob = TextBlob(title)
                 score = blob.sentiment.polarity
                 
@@ -84,10 +97,20 @@ def fetch_news(ticker: str) -> List[Dict]:
                     "link": link,
                     "score": round(score, 2),
                     "label": "Bullish" if score > 0.1 else "Bearish" if score < -0.1 else "Neutral",
-                    "reason": "AI Sentiment Analysis"
+                    "reason": "Sentiment Analysis"
                 })
     except Exception as e:
-        print(f"News Error for {ticker}: {e}")
+        print(f"Google RSS failed for {ticker}: {e}")
+
+    # 2. Fallback: If Google fails, return a placeholder so AI knows there is no news
+    if not articles:
+        articles.append({
+            "headline": f"No recent news found for {ticker}",
+            "link": "#",
+            "score": 0,
+            "label": "Neutral",
+            "reason": "Source Unavailable"
+        })
         
     return articles
 
@@ -96,64 +119,61 @@ def fetch_news(ticker: str) -> List[Dict]:
 # ===========================================================================
 def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
     res = {"intrinsic_value": 0.0, "margin_of_safety": 0.0, "growth_rate": 0.0, "dcf_method": "none"}
-    
-    if sector in NO_DCF_SECTORS: 
-        res["dcf_method"] = "skipped (sector)"
-        return res
+    if sector in NO_DCF_SECTORS: return res
     
     try:
+        # FCF Calculation
         fcf = 0
         cf_df = stock.cashflow
         
-        # Try to find Free Cash Flow
         if cf_df is not None and not cf_df.empty:
+            # Try explicit
             if "Free Cash Flow" in cf_df.index:
                 val = pd.to_numeric(cf_df.loc["Free Cash Flow"], errors='coerce').iloc[0]
                 if val > 0: fcf = val
             
-            # Manual fallback (OCF + CapEx)
+            # Try Manual (OCF + CapEx)
             if fcf == 0 and "Total Cash From Operating Activities" in cf_df.index and "Capital Expenditures" in cf_df.index:
                 ocf = cf_df.loc["Total Cash From Operating Activities"].iloc[0]
                 capex = cf_df.loc["Capital Expenditures"].iloc[0]
                 if (ocf + capex) > 0: fcf = ocf + capex
 
         if fcf == 0: fcf = info.get("freeCashflow", 0)
-
         if fcf <= 0: return res
 
+        # Parameters
         rev_g = info.get("revenueGrowth", 0.05) or 0.05
         res["growth_rate"] = round(rev_g * 100, 1)
-        
         discount = 0.10
         terminal = 0.025
         
-        # 5 Year Projection
+        # Projection
         future_fcf = [fcf * ((1 + rev_g) ** i) for i in range(1, 6)]
         tv = (future_fcf[-1] * (1 + terminal)) / (discount - terminal)
         
-        enterprise_val = sum([f / ((1 + discount) ** (i + 1)) for i, f in enumerate(future_fcf)])
-        enterprise_val += tv / ((1 + discount) ** 5)
+        # Discounting
+        ev = sum([f / ((1 + discount) ** (i + 1)) for i, f in enumerate(future_fcf)])
+        ev += tv / ((1 + discount) ** 5)
         
-        equity_val = enterprise_val - info.get("totalDebt", 0) + info.get("totalCash", 0)
+        # Equity
+        equity = ev - info.get("totalDebt", 0) + info.get("totalCash", 0)
         shares = info.get("sharesOutstanding", 0)
         
         if shares > 0:
-            fair_val = equity_val / shares
+            iv = equity / shares
             cp = info.get("currentPrice", 0) or 1
-            
             # Sanity Cap
-            if fair_val > cp * 4: fair_val = cp * 1.5
+            if iv > cp * 4: iv = cp * 1.5
             
-            res["intrinsic_value"] = round(fair_val, 2)
-            res["margin_of_safety"] = round(((fair_val - cp) / cp) * 100, 1)
+            res["intrinsic_value"] = round(iv, 2)
+            res["margin_of_safety"] = round(((iv - cp) / cp) * 100, 1)
 
         return res
-
     except:
         return res
 
 # ===========================================================================
-# 4. ENGINE
+# 4. ENGINE CORE
 # ===========================================================================
 def _calc_rsi(prices, period=14):
     try:
@@ -167,6 +187,7 @@ def _calc_rsi(prices, period=14):
 
 class InvestmentEngine:
     def __init__(self):
+        # Default tickers
         self.tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "INTC", "NFLX", "JPM", "BAC", "LLY", "XOM", "CVX", "KO", "PEP", "COST", "WMT", "DIS"]
 
     def load_data(self):
@@ -187,18 +208,20 @@ class InvestmentEngine:
                 info = stock.info
                 hist = stock.history(period="3mo")
                 
-                # Fetch Data
                 price = info.get("currentPrice", 0)
                 if price == 0 and not hist.empty: price = hist['Close'].iloc[-1]
                 
                 dcf = calc_dcf(stock, info, info.get("sector", ""))
                 rsi = _calc_rsi(hist['Close']) if not hist.empty else 50
-                news = fetch_news(t) # Now uses Google RSS
                 
+                # Fetch News with new Header Logic
+                news = fetch_news(t)
                 avg_sent = np.mean([n['score'] for n in news]) if news else 0
                 
+                # Scoring
                 score = 50 + (dcf['margin_of_safety'] / 3) + (avg_sent * 10)
                 if rsi < 30: score += 10
+                if rsi > 70: score -= 10
                 score = max(0, min(100, int(score)))
 
                 record = {
@@ -215,7 +238,7 @@ class InvestmentEngine:
                     "Articles_JSON": json.dumps(news)
                 }
                 data.append(record)
-                time.sleep(0.5)
+                time.sleep(0.5) 
             except Exception as e:
                 print(f"Skipping {t}: {e}")
                 
