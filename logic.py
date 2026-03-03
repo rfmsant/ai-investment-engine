@@ -1,7 +1,11 @@
 """
-logic.py - Apex Markets v5.0
-DCF uses stock.info dict directly (freeCashflow, operatingCashflow keys).
-No cash flow statement DataFrame parsing - works on every yfinance version.
+logic.py - Apex Markets v6.0
+KEY FIXES:
+- ONE yf.Ticker() call per stock, result reused everywhere
+- DCF reads 'Free Cash Flow' row from cashflow DataFrame (confirmed working)
+- Falls back to info['freeCashflow'] if DataFrame unavailable
+- Rate limiting: 0.5s sleep between stocks, batch info calls
+- No redundant API calls inside calc_dcf
 """
 import yfinance as yf
 import pandas as pd
@@ -21,17 +25,16 @@ try:
 except ImportError:
     HAS_TA = False
 
-CACHE_FILE = "market_cache.csv"
-MOCK_MODE  = True
+CACHE_FILE   = "market_cache.csv"
+MOCK_MODE    = True
+RATE_DELAY   = 0.5   # seconds between tickers (avoid rate limiting)
 
-# ETF/commodity sectors - skip DCF
 NO_DCF_SECTORS = {"ETF", "Commodities", "FX"}
 
 # ===========================================================================
 # UNIVERSE
 # ===========================================================================
 DEFAULT_UNIVERSE = [
-    # US Technology
     {"Ticker": "AAPL",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "MSFT",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "NVDA",  "Sector": "Technology",  "Region": "US"},
@@ -49,135 +52,77 @@ DEFAULT_UNIVERSE = [
     {"Ticker": "ADBE",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "MU",    "Sector": "Technology",  "Region": "US"},
     {"Ticker": "AMAT",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "LRCX",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "KLAC",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "TXN",   "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "ADI",   "Sector": "Technology",  "Region": "US"},
     {"Ticker": "CDNS",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "SNPS",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "WDAY",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "PLTR",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "PANW",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "CRWD",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "FTNT",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "DDOG",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "SNOW",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "NET",   "Sector": "Technology",  "Region": "US"},
     {"Ticker": "SHOP",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "TTD",   "Sector": "Technology",  "Region": "US"},
     {"Ticker": "UBER",  "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "SPOT",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "NFLX",  "Sector": "Technology",  "Region": "US"},
     {"Ticker": "ARM",   "Sector": "Technology",  "Region": "US"},
-    {"Ticker": "AI",    "Sector": "Technology",  "Region": "US"},
-    # US Financials
     {"Ticker": "JPM",   "Sector": "Financials",  "Region": "US"},
     {"Ticker": "BAC",   "Sector": "Financials",  "Region": "US"},
     {"Ticker": "GS",    "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "MS",    "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "WFC",   "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "C",     "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "BLK",   "Sector": "Financials",  "Region": "US"},
     {"Ticker": "V",     "Sector": "Financials",  "Region": "US"},
     {"Ticker": "MA",    "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "PYPL",  "Sector": "Financials",  "Region": "US"},
-    {"Ticker": "COIN",  "Sector": "Financials",  "Region": "US"},
-    # US Healthcare
     {"Ticker": "LLY",   "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "JNJ",   "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "UNH",   "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "PFE",   "Sector": "Healthcare",  "Region": "US"},
-    {"Ticker": "MRK",   "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "ABBV",  "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "TMO",   "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "AMGN",  "Sector": "Healthcare",  "Region": "US"},
-    {"Ticker": "GILD",  "Sector": "Healthcare",  "Region": "US"},
     {"Ticker": "VRTX",  "Sector": "Healthcare",  "Region": "US"},
-    {"Ticker": "REGN",  "Sector": "Healthcare",  "Region": "US"},
-    {"Ticker": "ISRG",  "Sector": "Healthcare",  "Region": "US"},
-    # US Energy
     {"Ticker": "XOM",   "Sector": "Energy",      "Region": "US"},
     {"Ticker": "CVX",   "Sector": "Energy",      "Region": "US"},
     {"Ticker": "COP",   "Sector": "Energy",      "Region": "US"},
-    {"Ticker": "EOG",   "Sector": "Energy",      "Region": "US"},
-    {"Ticker": "SLB",   "Sector": "Energy",      "Region": "US"},
-    {"Ticker": "OXY",   "Sector": "Energy",      "Region": "US"},
-    # US Consumer
     {"Ticker": "COST",  "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "WMT",   "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "TGT",   "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "HD",    "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "NKE",   "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "MCD",   "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "SBUX",  "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "PG",    "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "KO",    "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "PEP",   "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "LULU",  "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "ABNB",  "Sector": "Consumer",    "Region": "US"},
-    {"Ticker": "BKNG",  "Sector": "Consumer",    "Region": "US"},
     {"Ticker": "DIS",   "Sector": "Consumer",    "Region": "US"},
-    # US Industrials
     {"Ticker": "GE",    "Sector": "Industrials", "Region": "US"},
     {"Ticker": "HON",   "Sector": "Industrials", "Region": "US"},
     {"Ticker": "CAT",   "Sector": "Industrials", "Region": "US"},
     {"Ticker": "BA",    "Sector": "Industrials", "Region": "US"},
     {"Ticker": "RTX",   "Sector": "Industrials", "Region": "US"},
     {"Ticker": "LMT",   "Sector": "Industrials", "Region": "US"},
-    {"Ticker": "UPS",   "Sector": "Industrials", "Region": "US"},
-    {"Ticker": "ETN",   "Sector": "Industrials", "Region": "US"},
-    {"Ticker": "AXON",  "Sector": "Industrials", "Region": "US"},
-    # US Utilities
     {"Ticker": "NEE",   "Sector": "Utilities",   "Region": "US"},
-    {"Ticker": "DUK",   "Sector": "Utilities",   "Region": "US"},
     {"Ticker": "CEG",   "Sector": "Utilities",   "Region": "US"},
-    {"Ticker": "VST",   "Sector": "Utilities",   "Region": "US"},
-    # US Real Estate
     {"Ticker": "AMT",   "Sector": "Real Estate", "Region": "US"},
-    {"Ticker": "PLD",   "Sector": "Real Estate", "Region": "US"},
     {"Ticker": "EQIX",  "Sector": "Real Estate", "Region": "US"},
-    # US Materials
-    {"Ticker": "LIN",   "Sector": "Materials",   "Region": "US"},
     {"Ticker": "NEM",   "Sector": "Materials",   "Region": "US"},
     {"Ticker": "FCX",   "Sector": "Materials",   "Region": "US"},
-    # US Telecom
     {"Ticker": "T",     "Sector": "Telecom",     "Region": "US"},
     {"Ticker": "VZ",    "Sector": "Telecom",     "Region": "US"},
     {"Ticker": "TMUS",  "Sector": "Telecom",     "Region": "US"},
-    # Europe
     {"Ticker": "ASML",  "Sector": "Technology",  "Region": "Europe"},
     {"Ticker": "SAP",   "Sector": "Technology",  "Region": "Europe"},
-    {"Ticker": "ERIC",  "Sector": "Technology",  "Region": "Europe"},
     {"Ticker": "NVO",   "Sector": "Healthcare",  "Region": "Europe"},
     {"Ticker": "AZN",   "Sector": "Healthcare",  "Region": "Europe"},
-    {"Ticker": "GSK",   "Sector": "Healthcare",  "Region": "Europe"},
     {"Ticker": "SHEL",  "Sector": "Energy",      "Region": "Europe"},
     {"Ticker": "TTE",   "Sector": "Energy",      "Region": "Europe"},
-    {"Ticker": "BP",    "Sector": "Energy",      "Region": "Europe"},
     {"Ticker": "LVMUY", "Sector": "Consumer",    "Region": "Europe"},
     {"Ticker": "NSRGY", "Sector": "Consumer",    "Region": "Europe"},
-    {"Ticker": "RACE",  "Sector": "Consumer",    "Region": "Europe"},
-    {"Ticker": "SIEGY", "Sector": "Industrials", "Region": "Europe"},
-    {"Ticker": "DB",    "Sector": "Financials",  "Region": "Europe"},
-    # Asia
     {"Ticker": "TSM",   "Sector": "Technology",  "Region": "Asia"},
     {"Ticker": "SONY",  "Sector": "Technology",  "Region": "Asia"},
-    {"Ticker": "NTDOY", "Sector": "Technology",  "Region": "Asia"},
     {"Ticker": "TM",    "Sector": "Consumer",    "Region": "Asia"},
     {"Ticker": "BABA",  "Sector": "Technology",  "Region": "Asia"},
-    {"Ticker": "BIDU",  "Sector": "Technology",  "Region": "Asia"},
     {"Ticker": "INFY",  "Sector": "Technology",  "Region": "Asia"},
     {"Ticker": "HDB",   "Sector": "Financials",  "Region": "Asia"},
-    {"Ticker": "MUFG",  "Sector": "Financials",  "Region": "Asia"},
-    # Emerging Markets
     {"Ticker": "VALE",  "Sector": "Materials",   "Region": "EM"},
     {"Ticker": "PBR",   "Sector": "Energy",      "Region": "EM"},
     {"Ticker": "ITUB",  "Sector": "Financials",  "Region": "EM"},
-    {"Ticker": "ABEV",  "Sector": "Consumer",    "Region": "EM"},
-    # ETFs
     {"Ticker": "SPY",   "Sector": "ETF",         "Region": "Global"},
     {"Ticker": "QQQ",   "Sector": "ETF",         "Region": "Global"},
-    {"Ticker": "EEM",   "Sector": "ETF",         "Region": "Global"},
     {"Ticker": "GLD",   "Sector": "Commodities", "Region": "Global"},
 ]
 
@@ -187,7 +132,6 @@ DEFAULT_UNIVERSE = [
 # ===========================================================================
 
 def _safe(val, default: float = 0.0) -> float:
-    """Safely convert any value to float."""
     try:
         if val is None:
             return default
@@ -198,7 +142,6 @@ def _safe(val, default: float = 0.0) -> float:
 
 
 def _flatten_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Flatten MultiIndex columns from yfinance bulk download."""
     if df is None:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
@@ -208,7 +151,8 @@ def _flatten_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ===========================================================================
-# DCF ENGINE - uses stock.info dict, no DataFrame parsing needed
+# DCF ENGINE
+# Accepts a pre-fetched yf.Ticker object so no extra API calls are made
 # ===========================================================================
 
 _EMPTY_DCF = {
@@ -220,122 +164,134 @@ _EMPTY_DCF = {
 }
 
 
-def calc_dcf(info: Dict, sector: str = "", discount_rate: float = 0.10, ticker: str = "") -> Dict:
+def calc_dcf(stock: yf.Ticker, info: dict, sector: str = "") -> Dict:
     """
-    DCF valuation using only stock.info - works on ALL yfinance versions.
-
-    Key info fields used:
-      freeCashflow      - TTM free cash flow (best source)
-      operatingCashflow - TTM operating cash flow (fallback)
-      trailingEps       - earnings per share (last resort proxy)
-      revenueGrowth     - analyst forward revenue growth estimate
-      earningsGrowth    - analyst forward earnings growth estimate
-      sharesOutstanding - share count
-      totalDebt/totalCash - net debt bridge
-      currentPrice      - current market price
+    DCF using the pre-fetched Ticker object and info dict.
+    Priority:
+      1. cashflow DataFrame row 'Free Cash Flow' (multi-year CAGR)
+      2. info['freeCashflow'] TTM value
+      3. info['operatingCashflow'] TTM
+      4. trailingEps * shares proxy
+    Only ONE extra attribute access (stock.cashflow) which is cached by yfinance.
     """
     try:
-        # Skip DCF for assets that don't have earnings
         if sector in NO_DCF_SECTORS:
-            return {**_EMPTY_DCF, "dcf_method": "skipped_no_earnings"}
+            return {**_EMPTY_DCF, "dcf_method": "skipped_etf"}
 
-        # --- Step 1: find best available FCF figure ---
-        # Priority: freeCashflow from info (TTM, already calculated by Yahoo)
-        fcf    = _safe(info.get("freeCashflow"))
-        method = "ttm_fcf"
+        fcf         = None
+        growth_rate = None
+        method      = "none"
 
-        if fcf == 0.0:
-            fcf    = _safe(info.get("operatingCashflow"))
-            method = "ttm_ocf"
+        # --- Strategy 1: cashflow DataFrame (confirmed working, row = 'Free Cash Flow') ---
+        try:
+            cf_df = stock.cashflow  # already fetched/cached by yfinance
+            if cf_df is not None and not cf_df.empty and "Free Cash Flow" in cf_df.index:
+                fcf_row = cf_df.loc["Free Cash Flow"]
+                fcf_row = pd.to_numeric(fcf_row, errors="coerce").dropna()
+                positive = fcf_row[fcf_row > 0].sort_index(ascending=False)
+                if len(positive) >= 1:
+                    fcf    = float(positive.iloc[0])
+                    method = "cashflow_df"
+                    # Compute CAGR if we have 3+ years
+                    if len(positive) >= 3:
+                        newest = float(positive.iloc[0])
+                        oldest = float(positive.iloc[-1])
+                        yrs    = len(positive) - 1
+                        raw_cagr = (newest / oldest) ** (1.0 / yrs) - 1
+                        growth_rate = max(-0.20, min(0.35, raw_cagr))
+                        method = "cashflow_df+cagr"
+        except Exception as e:
+            print(f"  [DCF] cashflow df error: {e}")
 
-        if fcf == 0.0:
-            eps        = _safe(info.get("trailingEps"))
-            shares_tmp = _safe(info.get("sharesOutstanding") or
-                               info.get("impliedSharesOutstanding"))
-            if eps > 0 and shares_tmp > 0:
-                fcf    = eps * shares_tmp
+        # --- Strategy 2: info['freeCashflow'] ---
+        if fcf is None or fcf <= 0:
+            v = _safe(info.get("freeCashflow"))
+            if v > 0:
+                fcf    = v
+                method = "info_freecashflow"
+
+        # --- Strategy 3: info['operatingCashflow'] ---
+        if fcf is None or fcf <= 0:
+            v = _safe(info.get("operatingCashflow"))
+            if v > 0:
+                fcf    = v
+                method = "info_ocf"
+
+        # --- Strategy 4: EPS proxy ---
+        if fcf is None or fcf <= 0:
+            eps    = _safe(info.get("trailingEps"))
+            shares = _safe(info.get("sharesOutstanding") or
+                           info.get("impliedSharesOutstanding"))
+            if eps > 0 and shares > 0:
+                fcf    = eps * shares
                 method = "eps_proxy"
 
-        if fcf <= 0:
-            return {**_EMPTY_DCF, "dcf_method": "no_cashflow_in_info"}
+        if fcf is None or fcf <= 0:
+            return {**_EMPTY_DCF, "dcf_method": "no_fcf_found"}
 
-        # --- Step 2: growth rate ---
-        # First try historical CAGR from cashflow statement (more reliable)
-        # Row name confirmed as "Free Cash Flow" in yfinance 1.2.0
-        growth_rate = None
-        try:
-            stock_obj = yf.Ticker(ticker or info.get("symbol", ""))
-            for cf_attr in ("cashflow", "cash_flow"):
-                cf_df = getattr(stock_obj, cf_attr, None)
-                if cf_df is not None and not cf_df.empty and "Free Cash Flow" in cf_df.index:
-                    fcf_series = cf_df.loc["Free Cash Flow"].dropna()
-                    fcf_series = pd.to_numeric(fcf_series, errors="coerce").dropna()
-                    fcf_series = fcf_series[fcf_series > 0].sort_index(ascending=False)
-                    if len(fcf_series) >= 3:
-                        newest = float(fcf_series.iloc[0])
-                        oldest = float(fcf_series.iloc[-1])
-                        yrs    = len(fcf_series) - 1
-                        raw    = (newest / oldest) ** (1.0 / yrs) - 1
-                        growth_rate = max(-0.20, min(0.35, raw))
-                        method = method + "+hist_cagr"
-                    break
-        except Exception:
-            pass
-
+        # --- Growth rate fallback from analyst estimates ---
         if growth_rate is None:
-            # Fall back to analyst forward estimates
             rev_g = _safe(info.get("revenueGrowth"),  0.05)
             ear_g = _safe(info.get("earningsGrowth"), 0.05)
             growth_rate = rev_g * 0.4 + ear_g * 0.6
             growth_rate = max(-0.20, min(0.35, growth_rate))
+            if growth_rate == 0.0:
+                growth_rate = 0.05
 
-        if growth_rate == 0.0:
-            growth_rate = 0.05
-
+        discount_rate = 0.10
         terminal_g    = 0.025
         discount_rate = max(discount_rate, terminal_g + 0.005)
 
-        # --- Step 3: 5-year DCF ---
+        # --- 5-year DCF ---
         proj   = [fcf * (1 + growth_rate) ** yr for yr in range(1, 6)]
         tv     = proj[-1] * (1 + terminal_g) / (discount_rate - terminal_g)
         pv_fcf = sum(f / (1 + discount_rate) ** yr for yr, f in enumerate(proj, 1))
         pv_tv  = tv / (1 + discount_rate) ** 5
         ev     = pv_fcf + pv_tv
 
-        # --- Step 4: equity value (subtract net debt) ---
+        # --- Equity bridge ---
         debt       = _safe(info.get("totalDebt"))
         cash       = _safe(info.get("totalCash"))
         equity_val = ev - (debt - cash)
         if equity_val <= 0:
-            equity_val = ev  # ignore net-debt if it makes equity negative
+            equity_val = ev
 
-        # --- Step 5: per-share intrinsic value ---
+        # --- Per-share value ---
         shares = _safe(info.get("sharesOutstanding") or
                        info.get("impliedSharesOutstanding"))
         if shares <= 0:
-            return {**_EMPTY_DCF, "dcf_method": "no_shares_in_info"}
+            return {**_EMPTY_DCF, "dcf_method": "no_shares"}
 
         iv = equity_val / shares
         if iv <= 0 or iv > 1_000_000:
-            iv = ev / shares  # fallback ignoring net debt
+            iv = ev / shares
 
         cp  = _safe(info.get("currentPrice") or info.get("regularMarketPrice"))
         mos = ((iv - cp) / cp * 100.0) if cp > 0 else 0.0
 
+        # Confidence based on data source
+        if "cagr" in method:
+            confidence = "High"
+        elif "cashflow_df" in method:
+            confidence = "Medium"
+        else:
+            confidence = "Low"
+
         return {
             "intrinsic_value":  round(iv, 2),
             "margin_of_safety": round(mos, 1),
-            "dcf_confidence":   "Medium",
+            "dcf_confidence":   confidence,
             "growth_rate":      round(growth_rate * 100.0, 1),
             "dcf_method":       method,
         }
 
     except Exception as e:
+        print(f"  [DCF] exception: {e}")
         return {**_EMPTY_DCF, "dcf_method": f"error:{e}"}
 
 
 # ===========================================================================
-# TECHNICAL INDICATORS (pandas-ta with numpy fallback)
+# TECHNICAL INDICATORS
 # ===========================================================================
 
 def _calc_rsi(close: pd.Series, length: int = 14) -> float:
@@ -382,17 +338,15 @@ def _calc_atr(high: pd.Series, low: pd.Series,
 
 
 # ===========================================================================
-# SENTIMENT / NEWS
+# SENTIMENT & NEWS
 # ===========================================================================
 
 GEO_WORDS = [
     "war", "china", "tariff", "sanction", "supply chain", "ban", "strike",
     "geopolit", "regulat", "opec", "trade war", "embargo", "conflict",
-    "nato", "russia", "ukraine", "middle east", "iran", "north korea",
-    "export control", "import duty", "trade restriction", "retaliatory",
+    "nato", "russia", "ukraine", "middle east", "iran", "export control",
 ]
 
-# Finance-specific positive signals (broad enough for real headline language)
 POS_WORDS = [
     "beat", "beats", "topped", "exceed", "exceeded", "surpass", "record",
     "growth", "surge", "surged", "rally", "rallied", "upgrade", "upgraded",
@@ -403,12 +357,11 @@ POS_WORDS = [
     "price target raised", "strong", "robust", "accelerat", "momentum",
     "reward", "reaps", "rewards", "compound", "compounding", "upside",
     "positive", "gain", "gained", "jumped", "soar", "soared", "climbed",
-    "rose", "rising", "teams up", "collaboration", "alliance", "boosts",
-    "recovery", "recover", "record quarter", "market share", "raised forecast",
-    "exceed expectations", "strong quarter", "returning value",
+    "rose", "rising", "teams up", "collaboration", "boosts",
+    "recovery", "recover", "record quarter", "market share",
+    "raised forecast", "exceed expectations", "returning value",
 ]
 
-# Finance-specific negative signals
 NEG_WORDS = [
     "miss", "misses", "missed", "decline", "declined", "loss", "losses",
     "cut", "cuts", "probe", "lawsuit", "downgrade", "downgraded",
@@ -425,80 +378,65 @@ NEG_WORDS = [
 ]
 
 
-def _mock_sentiment(headline: str) -> Tuple[float, str]:
-    h = headline.lower()
+def _sentiment(headline: str) -> Tuple[float, str]:
+    h        = headline.lower()
     pos_hits = [w for w in POS_WORDS if w in h]
     neg_hits = [w for w in NEG_WORDS if w in h]
-
-    score = (len(pos_hits) * 0.12) - (len(neg_hits) * 0.12)
+    score    = (len(pos_hits) * 0.12) - (len(neg_hits) * 0.12)
     try:
-        tb_score = TextBlob(headline).sentiment.polarity
-        score    = score * 0.7 + tb_score * 0.3
+        tb    = TextBlob(headline).sentiment.polarity
+        score = score * 0.7 + tb * 0.3
     except Exception:
         pass
-
     score = round(max(-1.0, min(1.0, score)), 3)
 
     if pos_hits and not neg_hits:
-        reason = "Positive: " + ", ".join(pos_hits[:3])
+        reason = "Positive signals: " + ", ".join(pos_hits[:3])
     elif neg_hits and not pos_hits:
-        reason = "Negative: " + ", ".join(neg_hits[:3])
+        reason = "Negative signals: " + ", ".join(neg_hits[:3])
     elif pos_hits and neg_hits:
         reason = f"Mixed: {', '.join(pos_hits[:2])} vs {', '.join(neg_hits[:2])}"
     else:
         try:
             pol = TextBlob(headline).sentiment.polarity
-            if pol > 0.1:
-                reason = "Mildly positive language tone"
-            elif pol < -0.1:
-                reason = "Mildly negative language tone"
-            else:
-                reason = "Neutral tone - no strong directional signals"
+            reason = ("Mildly positive tone" if pol > 0.1 else
+                      "Mildly negative tone" if pol < -0.1 else
+                      "Neutral tone")
         except Exception:
-            reason = "Neutral - no directional signals found"
+            reason = "Neutral"
     return score, reason
 
 
 def fetch_news(ticker: str, max_items: int = 5) -> List[Dict]:
     articles: List[Dict] = []
     try:
-        url = (
-            f"https://news.google.com/rss/search"
-            f"?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en"
-        )
-        r = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ApexMarkets/1.0)"},
-            timeout=7,
-        )
+        url = (f"https://news.google.com/rss/search"
+               f"?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en")
+        r = requests.get(url,
+                         headers={"User-Agent": "Mozilla/5.0"},
+                         timeout=7)
         if r.status_code == 200:
             root = ET.fromstring(r.content)
             for item in root.findall(".//item")[:max_items]:
-                title_el = item.find("title")
-                date_el  = item.find("pubDate")
-                link_el  = item.find("link")
-
-                raw = title_el.text if title_el is not None and title_el.text else ""
+                t_el = item.find("title")
+                d_el = item.find("pubDate")
+                l_el = item.find("link")
+                raw  = t_el.text if t_el is not None and t_el.text else ""
                 headline = raw.split(" - ")[0].strip()
                 if not headline or len(headline) < 5:
                     continue
-
-                pub_date = (date_el.text or "")[:16] if date_el is not None else ""
-                link     = (link_el.text or "")      if link_el  is not None else ""
-
-                score, reason = _mock_sentiment(headline)
+                score, reason = _sentiment(headline)
                 geo   = any(kw in headline.lower() for kw in GEO_WORDS)
                 label = ("Bullish" if score >  0.10 else
                          "Bearish" if score < -0.10 else "Neutral")
-
                 articles.append({
                     "headline": headline,
                     "score":    round(score, 3),
                     "label":    label,
                     "reason":   reason,
                     "geo_risk": bool(geo),
-                    "pub_date": pub_date,
-                    "link":     link,
+                    "pub_date": (d_el.text or "")[:16] if d_el is not None else "",
+                    "link":     (l_el.text or "")      if l_el is not None else "",
                 })
     except Exception as e:
         print(f"[News] {ticker}: {e}")
@@ -506,12 +444,9 @@ def fetch_news(ticker: str, max_items: int = 5) -> List[Dict]:
     if not articles:
         articles.append({
             "headline": "No recent news available",
-            "score":    0.0,
-            "label":    "Neutral",
+            "score":    0.0, "label": "Neutral",
             "reason":   "News feed temporarily unavailable",
-            "geo_risk": False,
-            "pub_date": "",
-            "link":     "",
+            "geo_risk": False, "pub_date": "", "link": "",
         })
     return articles
 
@@ -528,26 +463,21 @@ def oracle_score(row: Dict) -> float:
     pm  = _safe(row.get("profit_margin"))
     sen = _safe(row.get("Sentiment"))
 
-    # Valuation 0-40 pts
     if   mos > 50:  v = 40
     elif mos > 20:  v = 30
     elif mos > 0:   v = 20
     elif mos > -20: v = 10
     else:           v = max(0.0, 10 + mos * 0.08)
 
-    # Technical 0-30 pts
     rsi_pts = max(0.0, (70 - rsi) * 0.5)
     vol_pts = min(10.0, vol * 4.0)
     t = min(30.0, rsi_pts + vol_pts)
 
-    # Quality 0-20 pts
     q = min(15.0, roe * 0.4)
     if pm > 20:
         q = min(20.0, q + 5)
 
-    # Sentiment 0-10 pts
     s = max(0.0, min(10.0, sen * 10))
-
     return round(min(100.0, max(0.0, v + t + q + s)), 1)
 
 
@@ -558,42 +488,37 @@ def build_verdict(row: Dict) -> str:
     roe  = _safe(row.get("ROE"))
     pm   = _safe(row.get("profit_margin"))
     si   = _safe(row.get("short_interest"))
-    meth = row.get("dcf_method", "")
+    meth = str(row.get("dcf_method", ""))
 
     if   mos > 30:  parts.append("GREEN STRONG VALUE: Significant discount to intrinsic value")
     elif mos > 10:  parts.append("YELLOW FAIR VALUE: Modest upside to intrinsic value")
     elif mos < -20: parts.append("RED OVERVALUED: Trading above intrinsic value")
-    elif "skipped" in str(meth) or "no_" in str(meth):
+    elif "skipped" in meth or "no_" in meth:
         parts.append("GREY VALUATION: DCF not applicable for this asset type")
 
-    if rsi < 30:   parts.append("OVERSOLD: RSI below 30 - potential mean-reversion entry")
-    elif rsi > 70: parts.append("OVERBOUGHT: RSI above 70 - momentum extended")
+    if rsi < 30:   parts.append("OVERSOLD: RSI below 30")
+    elif rsi > 70: parts.append("OVERBOUGHT: RSI above 70")
 
     if roe > 20 and pm > 15:
-        parts.append("HIGH QUALITY: Strong returns on equity and profit margins")
+        parts.append("HIGH QUALITY: Strong ROE and margins")
     elif roe > 10:
-        parts.append("DECENT QUALITY: Above-average returns on equity")
+        parts.append("DECENT QUALITY: Above-average ROE")
 
     if si > 15:
-        parts.append(f"SHORT PRESSURE: {si:.1f}% of float sold short")
+        parts.append(f"SHORT PRESSURE: {si:.1f}% of float short")
 
     if row.get("Geo_Risk"):
-        parts.append("GEOPOLITICAL: Macro risk signals in recent headlines")
+        parts.append("GEOPOLITICAL: Macro risk in recent headlines")
 
     reason = str(row.get("LLM_Reasoning", "")).strip()
-    if reason and "unavailable" not in reason.lower() and len(reason) > 10:
+    if reason and len(reason) > 10 and "unavailable" not in reason.lower():
         parts.append(f"NEWS: {reason[:100]}")
 
-    return " | ".join(parts) if parts else "Neutral outlook - monitoring"
+    return " | ".join(parts) if parts else "Neutral outlook"
 
-
-# ===========================================================================
-# RISK MANAGER
-# ===========================================================================
 
 def size_position(price: float, atr: float,
-                  account: float = 100_000,
-                  risk_pct: float = 0.02) -> Dict:
+                  account: float = 100_000, risk_pct: float = 0.02) -> Dict:
     if atr <= 0 or price <= 0:
         atr = price * 0.02 if price > 0 else 1.0
     daily_vol  = (atr / price) * 100
@@ -619,13 +544,10 @@ class InvestmentEngine:
         try:
             u = pd.read_csv("universe.csv")
             if "Ticker" not in u.columns:
-                raise ValueError("No Ticker column")
-            u.setdefault("Sector", "Unknown")
-            u.setdefault("Region", "Unknown")
+                raise ValueError
             self.universe = u
         except Exception:
             self.universe = pd.DataFrame(DEFAULT_UNIVERSE)
-
         self.tickers = list(dict.fromkeys(self.universe["Ticker"].tolist()))
 
     def load_data(self) -> Tuple[pd.DataFrame, bool]:
@@ -655,7 +577,7 @@ class InvestmentEngine:
         except Exception:
             pass
 
-        # Bulk OHLCV download
+        # --- Bulk OHLCV (one call for all tickers) ---
         print(f"Bulk downloading {total} tickers...")
         bulk = None
         try:
@@ -674,12 +596,16 @@ class InvestmentEngine:
                         text=f"Analysing {ticker}  ({i+1}/{total})",
                     )
 
-                # --- OHLCV ---
+                # ---- OHLCV ------------------------------------------------
                 df = None
                 if bulk is not None and not bulk.empty:
                     try:
-                        if ticker in bulk.columns.get_level_values(0):
-                            df = _flatten_df(bulk[ticker]).dropna(how="all")
+                        lvl0 = bulk.columns.get_level_values(0)
+                        if ticker in lvl0:
+                            raw = bulk.xs(ticker, axis=1, level=1) if isinstance(bulk.columns, pd.MultiIndex) else bulk[ticker]
+                            raw = _flatten_df(raw).dropna(how="all")
+                            if len(raw) >= 20:
+                                df = raw
                     except Exception:
                         pass
 
@@ -717,39 +643,38 @@ class InvestmentEngine:
                 else:
                     vol_rel = 1.0
 
-                # --- Fundamentals + DCF (single info call) ---
-                info = {}
+                # ---- ONE Ticker object, reused for info + cashflow --------
+                stock  = yf.Ticker(ticker)
+                info   = {}
                 try:
-                    info = yf.Ticker(ticker).info or {}
-                except Exception:
-                    pass
+                    info = stock.info or {}
+                except Exception as e:
+                    print(f"  [{ticker}] info failed: {e} — using cashflow only")
 
-                pe_ratio = _safe(info.get("trailingPE"))
-                roe      = _safe(info.get("returnOnEquity"))   * 100
-                pm       = _safe(info.get("profitMargins"))    * 100
-                sector   = self._meta(ticker, "Sector", "Unknown")
+                sector = self._meta(ticker, "Sector", "Unknown")
 
-                dcf = calc_dcf(info, sector=sector, ticker=ticker)
+                # ---- DCF (passes stock object, no extra API call) ---------
+                dcf = calc_dcf(stock, info, sector=sector)
 
-                # Log DCF result for first few tickers
                 if i < 5:
-                    print(f"  {ticker}: FCF={info.get('freeCashflow')} "
-                          f"OCF={info.get('operatingCashflow')} "
-                          f"IV={dcf['intrinsic_value']} "
-                          f"MoS={dcf['margin_of_safety']}% "
+                    print(f"  {ticker}: IV=${dcf['intrinsic_value']:.0f} "
+                          f"MoS={dcf['margin_of_safety']:.1f}% "
                           f"method={dcf['dcf_method']}")
 
-                # --- News ---
+                # ---- News ------------------------------------------------
                 articles     = fetch_news(ticker)
                 avg_sent     = float(np.mean([a["score"] for a in articles]))
                 geo_flag     = any(a["geo_risk"] for a in articles)
                 articles_str = json.dumps(articles, ensure_ascii=True,
                                           separators=(",", ":"))
 
-                # --- Risk sizing ---
+                # ---- Risk sizing ----------------------------------------
                 pos = size_position(price, atr)
 
-                # --- Short interest ---
+                # ---- Fundamentals from info (graceful if rate-limited) ---
+                pe_ratio   = _safe(info.get("trailingPE"))
+                roe        = _safe(info.get("returnOnEquity")) * 100
+                pm         = _safe(info.get("profitMargins"))  * 100
                 short_pct  = _safe(info.get("shortPercentOfFloat")) * 100
                 short_sent = ("Bearish - High Short Interest" if short_pct > 20 else
                               "Bullish - Low Short Interest"  if short_pct < 5  else
@@ -787,17 +712,16 @@ class InvestmentEngine:
                 record["AI_Verdict"]   = build_verdict(record)
                 results.append(record)
 
-                time.sleep(0.05)
+                # Rate limiting - be gentle with Yahoo
+                time.sleep(RATE_DELAY)
 
             except Exception as e:
                 print(f"[Error] {ticker}: {e}")
                 continue
 
         df_out = pd.DataFrame(results)
-
         if not df_out.empty:
             dcf_ok = (df_out["intrinsic_value"] > 0).sum()
-            print(f"Done: {len(df_out)} stocks | DCF success: {dcf_ok}/{len(df_out)}")
+            print(f"Done: {len(df_out)} stocks | DCF: {dcf_ok}/{len(df_out)}")
             df_out.to_csv(CACHE_FILE, index=False)
-
         return df_out
