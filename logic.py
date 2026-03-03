@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 CACHE_FILE = "market_cache.csv"
 
 # ===========================================================================
-# 1. THE 500+ UNIVERSE
+# 1. THE 500+ UNIVERSE (RECONSTRUCTED)
 # ===========================================================================
 SECTOR_MAP = {
     "AI_Tech": ["NVDA", "MSFT", "GOOGL", "AMD", "PLTR", "SMCI", "TSM", "META", "TSLA", "CRM", "ADBE", "NFLX", "AMZN", "ORCL", "IBM", "INTC", "QCOM", "AVGO", "NOW", "SNOW", "PANW", "CRWD", "FTNT", "ZS", "NET", "SHOP", "UBER", "DDOG", "TEAM", "WDAY", "MDB", "SQ", "PYPL", "AFRM", "HOOD", "COIN", "MSTR", "AI", "PATH", "IOT"],
@@ -29,7 +29,6 @@ SECTOR_MAP = {
     "Biochem_Pharma": ["LLY", "NVO", "JNJ", "PFE", "MRK", "ABBV", "BMY", "GILD", "AMGN", "BIIB", "REGN", "VRTX", "MRNA", "BNTX", "AZN", "SNY", "NVS", "ZTS", "ISRG", "SYK", "BSX", "MDT", "EW", "BAX"],
 }
 
-# Expand to 500: Adding S&P 500 mid-caps and others to fill the gap
 EXTRA_TICKERS = ["SPY", "QQQ", "DIA", "IWM", "VUG", "VTI", "VOO", "VEA", "VWO", "BKNG", "MA", "V", "AXP", "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "TROW", "UPS", "FDX", "UNP", "HON", "GE", "MMM", "CAT", "DE", "EMR", "ETN", "PH", "ITW", "NSC", "CSX", "WM", "RSG", "AMT", "PLD", "CCI", "EQIX", "DLR", "PSA", "O", "VICI", "SBAC", "WELL", "AVB", "EQR", "VTR", "BXP", "ARE", "MAA", "T", "VZ", "TMUS", "CMCSA", "CHTR", "DIS", "WBD", "PARA", "FOXA", "LYV", "MAR", "HLT", "RCL", "CCL", "NCLH", "MGM", "WYNN", "LVS", "DRI", "SBUX", "YUM", "MCD", "CMG", "LEN", "DHI", "PHM", "NVR", "TOL", "HD", "LOW", "TGT", "TJX", "ROST", "DLTR", "DG", "AZO", "ORLY", "GPC", "TSCO", "ULTA", "BBY", "EBAY", "ETSY", "MELI", "SE", "CPNG", "BABA", "JD", "PDD", "BIDU", "NTES", "NIU", "XPEV", "LI", "NIO", "BYDDY"]
 
 FULL_TICKER_LIST = list(set([t for sublist in SECTOR_MAP.values() for t in sublist] + EXTRA_TICKERS))
@@ -43,43 +42,40 @@ def fetch_news(ticker: str) -> List[Dict]:
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0 Safari/537.36"}
     try:
         url = f"https://news.google.com/rss/search?q={ticker}+stock+when:7d&hl=en-US&gl=US&ceid=US:en"
-        response = requests.get(url, headers=headers, timeout=2)
+        response = requests.get(url, headers=headers, timeout=3)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             for item in root.findall('./channel/item')[:3]:
                 title = item.find('title').text
+                link = item.find('link').text
                 desc_html = item.find('description').text if item.find('description') is not None else ""
                 soup = BeautifulSoup(desc_html, "html.parser")
-                summary = soup.get_text()[:150]
+                summary = soup.get_text()[:160]
                 blob = TextBlob(title)
                 score = blob.sentiment.polarity
                 articles.append({
-                    "headline": title,
-                    "link": item.find('link').text,
-                    "score": round(score, 2),
+                    "headline": title, "link": link, "score": round(score, 2),
                     "label": "Bullish" if score > 0.05 else "Bearish" if score < -0.05 else "Neutral",
-                    "reason": summary if len(summary) > 20 else "Market tracking updates."
+                    "reason": summary if len(summary) > 10 else "Market tracking updates."
                 })
     except: pass
     return articles
 
 def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str:
+    if not api_key: return "API Key Required"
+    client = OpenAI(api_key=api_key)
+    news_txt = "\n".join([f"- {n['headline']}: {n['reason']}" for n in news[:5]])
+    prompt = f"""
+    Institutional Analysis: {ticker}. 
+    Price: ${data.get('Price')} | Fair Value: ${data.get('intrinsic_value')}
+    News: {news_txt}
+    Structure: Numbers, Forecast, News Cycle, Geopolitics, Risks, Verdict.
+    Tone: Professional Apple-style memo.
+    """
     try:
-        client = OpenAI(api_key=api_key)
-        news_txt = "\n".join([f"- {n['headline']} (Brief: {n['reason']})" for n in news[:5]])
-        prompt = f"""
-        Act as a Lead Investment Analyst at The Motley Fool. 
-        Deep Dive for {ticker}.
-        Price: ${data.get('Price')} | Fair Value: ${data.get('intrinsic_value')} | Upside: {data.get('margin_of_safety')}%
-        Risk: {data.get('risk_level')}
-        News: {news_txt}
-        
-        Provide: 1. Numbers 2. Forecasts 3. News Context 4. Geopolitics 5. Risk Analysis 6. VERDICT.
-        Use Apple-style clean formatting.
-        """
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         return response.choices[0].message.content
-    except Exception as e: return f"Error: {str(e)}"
+    except Exception as e: return str(e)
 
 def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
     res = {"intrinsic_value": 0.0, "margin_of_safety": 0.0, "growth_rate": 0.0}
@@ -90,40 +86,39 @@ def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
             if cf_df is not None and not cf_df.empty and "Free Cash Flow" in cf_df.index:
                 fcf = cf_df.loc["Free Cash Flow"].iloc[0]
         if not fcf or fcf <= 0: return res
-        
         rev_g = info.get("revenueGrowth", 0.05) or 0.05
         res["growth_rate"] = round(rev_g * 100, 1)
-        discount, terminal, years = 0.10, 0.025, 5
-        future_fcf = [fcf * ((1 + rev_g) ** i) for i in range(1, years + 1)]
+        discount, terminal = 0.10, 0.025
+        future_fcf = [fcf * ((1 + rev_g) ** i) for i in range(1, 6)]
         tv = (future_fcf[-1] * (1 + terminal)) / (discount - terminal)
-        ev = sum([f / ((1 + discount) ** (i + 1)) for i, f in enumerate(future_fcf)]) + (tv / (1 + discount) ** years)
+        ev = sum([f / ((1 + discount) ** (i + 1)) for i, f in enumerate(future_fcf)]) + (tv / (1 + discount) ** 5)
         equity = ev - info.get("totalDebt", 0) + info.get("totalCash", 0)
         shares = info.get("sharesOutstanding")
         if shares and shares > 0:
             iv = equity / shares
             cp = info.get("currentPrice", 1)
-            if iv > cp * 4: iv = cp * 1.5
+            if iv > cp * 5: iv = cp * 1.5
             res["intrinsic_value"] = round(iv, 2)
             res["margin_of_safety"] = round(((iv - cp) / cp) * 100, 1)
     except: pass
     return res
 
 # ===========================================================================
-# 3. MULTI-THREADED ENGINE
+# 3. HIGH SPEED MULTI-THREADED ENGINE
 # ===========================================================================
 class InvestmentEngine:
     def __init__(self):
         self.tickers = FULL_TICKER_LIST
 
     def process_ticker(self, t):
-        """Single ticker worker for the thread pool"""
         try:
             stock = yf.Ticker(t)
+            # Fetch minimal data to increase speed
             info = stock.info
-            price = info.get("currentPrice")
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
             if not price: return None
             
-            sector = "Unknown"
+            sector = "General"
             for s_name, t_list in SECTOR_MAP.items():
                 if t in t_list: sector = s_name
             
@@ -131,15 +126,15 @@ class InvestmentEngine:
             news = fetch_news(t)
             avg_sent = np.mean([n['score'] for n in news]) if news else 0
             
-            # Simple Oracle Score
             score = 50 + (dcf['margin_of_safety'] / 3) + (avg_sent * 10)
             score = max(0, min(100, int(score)))
             
+            # Simple vol check
             hist = stock.history(period="1mo")
             vol = hist['Close'].pct_change().std() * 100 if not hist.empty else 0
             
             return {
-                "Ticker": t, "Sector": sector, "Price": price,
+                "Ticker": t, "Sector": sector, "Price": round(price, 2),
                 "intrinsic_value": dcf["intrinsic_value"],
                 "margin_of_safety": dcf["margin_of_safety"],
                 "growth_rate": dcf["growth_rate"],
@@ -151,18 +146,27 @@ class InvestmentEngine:
         except: return None
 
     def load_data(self):
-        if os.path.exists(CACHE_FILE): return pd.read_csv(CACHE_FILE), True
+        if os.path.exists(CACHE_FILE): 
+            try: return pd.read_csv(CACHE_FILE), True
+            except: pass
         return pd.DataFrame(), False
 
     def fetch_market_data(self, progress_bar=None):
         results = []
-        # Increase workers to 20 for maximum speed
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            ticker_count = len(self.tickers)
+        ticker_count = len(self.tickers)
+        
+        # Parallel execution with 25 workers (Maximum stable speed)
+        with ThreadPoolExecutor(max_workers=25) as executor:
             for i, result in enumerate(executor.map(self.process_ticker, self.tickers)):
                 if result: results.append(result)
-                if progress_bar:
+                
+                # Update UI periodically so it doesn't time out
+                if progress_bar and i % 5 == 0:
                     progress_bar.progress((i+1)/ticker_count, text=f"Processing {i+1}/{ticker_count} assets...")
+                
+                # INTERMEDIATE SAVE: If we have 20 new items, save them to CSV immediately
+                if len(results) > 0 and len(results) % 20 == 0:
+                    pd.DataFrame(results).to_csv(CACHE_FILE, index=False)
         
         df = pd.DataFrame(results)
         if not df.empty: df.to_csv(CACHE_FILE, index=False)
