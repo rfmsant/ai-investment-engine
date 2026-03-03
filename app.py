@@ -375,11 +375,12 @@ if not fdf.empty:
     # ─────────────────────────────────────────────────────────────────────────
     # TABS
     # ─────────────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "◈  Terminal",
         "⬡  Risk Lab",
         "◎  Deep Dive",
         "◻  Market Intel",
+        "🔧  Diagnostics",
     ])
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -873,6 +874,289 @@ if not fdf.empty:
             fig_sent.add_vline(x=0, line_dash="dash", line_color="#52525b")
             fig_sent = dark_layout(fig_sent, "Sentiment Distribution")
             st.plotly_chart(fig_sent, use_container_width=True)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB 5 — DIAGNOSTICS
+    # ═══════════════════════════════════════════════════════════════════════
+    with tab5:
+        st.markdown("### 🔧 System Diagnostics")
+        st.markdown(
+            "This tab runs a **live test** against yfinance right now — no cache involved. "
+            "It shows exactly what data is available and why DCF may be failing. "
+            "Use it whenever something looks wrong."
+        )
+
+        import yfinance as _yf
+        import traceback as _tb
+
+        # ── Environment info ──────────────────────────────────────────────
+        st.markdown("#### Environment")
+        try:
+            yf_ver = _yf.__version__
+        except Exception:
+            yf_ver = "unknown"
+        try:
+            import pandas as _pd
+            pd_ver = _pd.__version__
+        except Exception:
+            pd_ver = "unknown"
+        try:
+            import numpy as _np
+            np_ver = _np.__version__
+        except Exception:
+            np_ver = "unknown"
+        try:
+            import pandas_ta as _ta
+            ta_ver = _ta.__version__
+        except Exception:
+            ta_ver = "NOT INSTALLED"
+
+        ec1, ec2, ec3, ec4 = st.columns(4)
+        ec1.metric("yfinance", yf_ver)
+        ec2.metric("pandas",   pd_ver)
+        ec3.metric("numpy",    np_ver)
+        ec4.metric("pandas-ta", ta_ver)
+
+        st.markdown("---")
+
+        # ── Live DCF probe ────────────────────────────────────────────────
+        st.markdown("#### Live DCF Probe")
+        st.caption(
+            "Pick any ticker and click **Run Probe** — the app will fetch its "
+            "data live from Yahoo Finance and show every attribute and row name "
+            "it finds. This tells us exactly why DCF is or isn't working."
+        )
+        probe_col1, probe_col2 = st.columns([2, 1])
+        with probe_col1:
+            probe_ticker = st.text_input("Ticker to probe", value="AAPL",
+                                          placeholder="e.g. AAPL, MSFT, TSM")
+        with probe_col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            run_probe = st.button("▶  Run Probe", type="primary")
+
+        if run_probe and probe_ticker:
+            ticker_clean = probe_ticker.strip().upper()
+            st.markdown(f"**Probing `{ticker_clean}`…**")
+
+            with st.spinner("Fetching from Yahoo Finance…"):
+                logs     = []
+                results  = {}
+
+                try:
+                    stock = _yf.Ticker(ticker_clean)
+
+                    # ── Basic info ────────────────────────────────────────
+                    try:
+                        info = stock.info or {}
+                        price = info.get("currentPrice") or info.get("regularMarketPrice")
+                        shares = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
+                        logs.append(f"✅ info fetched — {len(info)} keys")
+                        logs.append(f"   currentPrice        = {price}")
+                        logs.append(f"   sharesOutstanding   = {shares}")
+                        logs.append(f"   trailingPE          = {info.get('trailingPE')}")
+                        logs.append(f"   returnOnEquity      = {info.get('returnOnEquity')}")
+                        logs.append(f"   shortPercentOfFloat = {info.get('shortPercentOfFloat')}")
+                        results["price"]  = price
+                        results["shares"] = shares
+                    except Exception as e:
+                        logs.append(f"❌ info failed: {e}")
+
+                    # ── Price history ─────────────────────────────────────
+                    try:
+                        hist = _yf.download(ticker_clean, period="6mo",
+                                            auto_adjust=True, progress=False)
+                        if hist is not None and not hist.empty:
+                            logs.append(f"✅ price history — {len(hist)} rows, cols: {list(hist.columns)}")
+                            results["hist_ok"] = True
+                        else:
+                            logs.append("❌ price history empty")
+                    except Exception as e:
+                        logs.append(f"❌ price history failed: {e}")
+
+                    # ── Cash flow attributes ──────────────────────────────
+                    cf_attrs = ["cashflow", "cash_flow", "annual_cashflow",
+                                "quarterly_cashflow"]
+                    for attr in cf_attrs:
+                        try:
+                            obj = getattr(stock, attr, None)
+                            if obj is None:
+                                logs.append(f"   {attr}: None")
+                            elif isinstance(obj, pd.DataFrame):
+                                if obj.empty:
+                                    logs.append(f"   {attr}: empty DataFrame")
+                                else:
+                                    logs.append(f"✅ {attr}: {obj.shape[0]} rows × {obj.shape[1]} cols")
+                                    logs.append(f"   Row names: {list(obj.index)}")
+                                    # Show first column values
+                                    first_col = obj.columns[0]
+                                    for row_name in obj.index:
+                                        val = obj.loc[row_name, first_col]
+                                        logs.append(f"     {row_name}: {val}")
+                                    results[f"cf_{attr}"] = list(obj.index)
+                        except Exception as e:
+                            logs.append(f"   {attr}: exception — {e}")
+
+                    # ── Financials (income statement) ─────────────────────
+                    fin_attrs = ["financials", "income_stmt", "annual_financials"]
+                    for attr in fin_attrs:
+                        try:
+                            obj = getattr(stock, attr, None)
+                            if obj is None:
+                                logs.append(f"   financials.{attr}: None")
+                            elif isinstance(obj, pd.DataFrame):
+                                if obj.empty:
+                                    logs.append(f"   financials.{attr}: empty")
+                                else:
+                                    logs.append(f"✅ financials.{attr}: {obj.shape[0]} rows")
+                                    logs.append(f"   Row names: {list(obj.index)}")
+                                    results[f"fin_{attr}"] = list(obj.index)
+                        except Exception as e:
+                            logs.append(f"   financials.{attr}: exception — {e}")
+
+                    # ── Try DCF calculation ───────────────────────────────
+                    logs.append("")
+                    logs.append("── DCF Calculation ──")
+                    try:
+                        from logic import ValuationEngine as _VE, _extract_fcf
+                        fcf = _extract_fcf(stock, debug_ticker=ticker_clean)
+                        if fcf is not None:
+                            logs.append(f"✅ FCF extracted: {fcf.tolist()}")
+                            dcf_result = _VE.calculate(ticker_clean)
+                            logs.append(f"✅ Intrinsic value: ${dcf_result['intrinsic_value']:.2f}")
+                            logs.append(f"   Margin of safety: {dcf_result['margin_of_safety']:.1f}%")
+                            logs.append(f"   Confidence: {dcf_result['dcf_confidence']}")
+                            logs.append(f"   Growth rate: {dcf_result['growth_rate']:.1f}%")
+                            logs.append(f"   Method: {dcf_result['dcf_method']}")
+                            results["dcf"] = dcf_result
+                        else:
+                            logs.append("❌ FCF extraction returned None")
+                            logs.append("   → DCF will show 0 for this ticker")
+                    except Exception as e:
+                        logs.append(f"❌ DCF error: {e}")
+                        logs.append(_tb.format_exc())
+
+                    # ── News test ─────────────────────────────────────────
+                    logs.append("")
+                    logs.append("── News Fetch ──")
+                    try:
+                        from logic import NewsFetcher as _NF, LLMAnalyst as _LA
+                        nf = _NF(_LA(mock_mode=True))
+                        arts = nf.fetch(ticker_clean, max_items=3)
+                        if arts and arts[0]["headline"] != "No recent news available":
+                            logs.append(f"✅ {len(arts)} articles fetched")
+                            for a in arts:
+                                logs.append(f"   [{a['label']:7s} {a['score']:+.2f}] {a['headline'][:70]}")
+                                logs.append(f"            → {a['reason']}")
+                        else:
+                            logs.append("⚠️ No articles returned (news feed may be blocked)")
+                        results["news"] = arts
+                    except Exception as e:
+                        logs.append(f"❌ News error: {e}")
+
+                except Exception as e:
+                    logs.append(f"❌ Fatal probe error: {e}")
+                    logs.append(_tb.format_exc())
+
+            # ── Display logs ──────────────────────────────────────────────
+            log_text = "\n".join(logs)
+            st.markdown("**Raw diagnostic output:**")
+            st.code(log_text, language="text")
+
+            # ── Summary cards ─────────────────────────────────────────────
+            st.markdown("**Summary:**")
+            sc1, sc2, sc3, sc4 = st.columns(4)
+
+            has_price  = results.get("price") is not None
+            has_hist   = results.get("hist_ok", False)
+            has_dcf    = results.get("dcf", {}).get("intrinsic_value", 0) > 0
+            has_news   = bool(results.get("news") and
+                              results["news"][0]["headline"] != "No recent news available")
+
+            sc1.metric("Price Data",    "✅ OK" if has_price else "❌ Missing")
+            sc2.metric("Price History", "✅ OK" if has_hist  else "❌ Missing")
+            sc3.metric("DCF Value",
+                       f"${results['dcf']['intrinsic_value']:.2f}" if has_dcf else "❌ 0",
+                       help="If 0, look at the logs above to see which CF rows were found")
+            sc4.metric("News Feed",     "✅ OK" if has_news  else "⚠️ Empty")
+
+            if not has_dcf:
+                # Give specific diagnosis
+                cf_keys_found = []
+                for k, v in results.items():
+                    if k.startswith("cf_") and v:
+                        cf_keys_found.extend(v)
+
+                if not cf_keys_found:
+                    st.error(
+                        "**Root cause**: No cash-flow DataFrame found at all. "
+                        "This usually means:\n"
+                        "1. The ticker doesn't report cash flows (ETF, commodity, foreign listing)\n"
+                        "2. Yahoo Finance rate-limited the request during the scan\n"
+                        "3. yfinance version is very old (check the version above)\n\n"
+                        "**Fix**: Try the probe again — if it works here but fails during scan, "
+                        "add `time.sleep(0.5)` rate limiting in `logic.py`."
+                    )
+                else:
+                    # Found CF but couldn't extract OCF
+                    kw_list = ["operatingcash", "cashfromoperating", "netcashfromoperating",
+                               "totalcashfromoperating", "cashprovidedbyoperating"]
+                    matched = [k for k in cf_keys_found
+                               if any(kw in k.lower().replace(" ","").replace("_","")
+                                      for kw in kw_list)]
+                    if not matched:
+                        st.error(
+                            f"**Root cause**: Cash-flow table found ({len(cf_keys_found)} rows) "
+                            f"but none matched operating-cash-flow keywords.\n\n"
+                            f"**Rows found**: `{cf_keys_found}`\n\n"
+                            f"**Fix**: Copy the exact row name from the logs above that represents "
+                            f"operating cash flow and report it — I'll add it to the keyword list."
+                        )
+                    else:
+                        st.warning(
+                            f"CF rows matched: {matched} — but DCF still returned 0. "
+                            "Check the 'DCF Calculation' section of the logs above for the exact error."
+                        )
+
+        st.markdown("---")
+
+        # ── Cache inspector ────────────────────────────────────────────────
+        st.markdown("#### Cache Inspector")
+        cache_path = "market_cache.csv"
+        if os.path.exists(cache_path):
+            try:
+                cache_df = pd.read_csv(cache_path)
+                dcf_ok   = (cache_df["intrinsic_value"] > 0).sum() if "intrinsic_value" in cache_df.columns else 0
+                news_ok  = cache_df["Articles_JSON"].apply(
+                    lambda x: isinstance(x, str) and len(x) > 50
+                ).sum() if "Articles_JSON" in cache_df.columns else 0
+
+                ci1, ci2, ci3, ci4 = st.columns(4)
+                ci1.metric("Cached stocks",   len(cache_df))
+                ci2.metric("With DCF data",   dcf_ok,
+                           delta=f"{dcf_ok/max(len(cache_df),1)*100:.0f}%")
+                ci3.metric("With news data",  news_ok,
+                           delta=f"{news_ok/max(len(cache_df),1)*100:.0f}%")
+                ci4.metric("Cache age",
+                           cache_df["Last_Updated"].iloc[0] if "Last_Updated" in cache_df.columns else "?")
+
+                if dcf_ok == 0:
+                    st.error(
+                        "**The cache has 0 DCF values.** This is a stale cache from before "
+                        "the DCF engine was fixed. You MUST click **🗑 Clear Cache** "
+                        "in the sidebar and then **⟳ Run Global Scan** to regenerate it."
+                    )
+
+                with st.expander("Preview cache (first 10 rows)"):
+                    preview_cols = [c for c in ["Ticker","Price","intrinsic_value",
+                                                 "margin_of_safety","dcf_confidence",
+                                                 "dcf_method","Headline","risk_level"]
+                                     if c in cache_df.columns]
+                    st.dataframe(cache_df[preview_cols].head(10),
+                                 use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Could not read cache: {e}")
+        else:
+            st.info("No cache file found — run a scan first.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
