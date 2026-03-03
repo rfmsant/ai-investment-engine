@@ -15,11 +15,11 @@ warnings.filterwarnings("ignore")
 CACHE_FILE = "market_cache.csv"
 
 # ===========================================================================
-# 1. THE 500+ UNIVERSE (RECONSTRUCTED)
+# THE 500+ UNIVERSE
 # ===========================================================================
 SECTOR_MAP = {
     "AI_Tech": ["NVDA", "MSFT", "GOOGL", "AMD", "PLTR", "SMCI", "TSM", "META", "TSLA", "CRM", "ADBE", "NFLX", "AMZN", "ORCL", "IBM", "INTC", "QCOM", "AVGO", "NOW", "SNOW", "PANW", "CRWD", "FTNT", "ZS", "NET", "SHOP", "UBER", "DDOG", "TEAM", "WDAY", "MDB", "SQ", "PYPL", "AFRM", "HOOD", "COIN", "MSTR", "AI", "PATH", "IOT"],
-    "War_Defense": ["LMT", "RTX", "NOC", "GD", "BA", "HII", "LHX", "TXT", "KTOS", "AVAV", "LDOS", "CACI", "SAIC", "BWXT", "CW", "PLTR", "OSK", "TDG", "HEI", "RHM.DE", "BAESY", "AIR.PA", "LDO.MI"],
+    "War_Defense": ["LMT", "RTX", "NOC", "GD", "BA", "HII", "LHX", "TXT", "KTOS", "AVAV", "LDOS", "CACI", "SAIC", "BWXT", "CW", "OSK", "TDG", "HEI"],
     "Nuclear_Energy": ["CCJ", "NEE", "DUK", "SO", "AEP", "EXC", "PEG", "ETR", "D", "PCG", "CEG", "SMR", "FLR", "VUSTX", "UUUU", "LEU", "NXE", "DNN"],
     "Energy": ["XOM", "CVX", "SHEL", "TTE", "COP", "SLB", "EOG", "VLO", "MPC", "BP", "OXY", "KMI", "WMB", "PSX", "HES", "DVN", "FANG", "MRO", "HAL", "BKR", "TRGP", "CTRA", "APA", "OVV"],
     "Food_Agri": ["ADM", "CTVA", "CF", "MOS", "NTR", "FMC", "DE", "CAT", "CNH", "AGCO", "TSN", "BG", "ANDE", "SMG", "RKDA", "SEED"],
@@ -29,12 +29,12 @@ SECTOR_MAP = {
     "Biochem_Pharma": ["LLY", "NVO", "JNJ", "PFE", "MRK", "ABBV", "BMY", "GILD", "AMGN", "BIIB", "REGN", "VRTX", "MRNA", "BNTX", "AZN", "SNY", "NVS", "ZTS", "ISRG", "SYK", "BSX", "MDT", "EW", "BAX"],
 }
 
-EXTRA_TICKERS = ["SPY", "QQQ", "DIA", "IWM", "VUG", "VTI", "VOO", "VEA", "VWO", "BKNG", "MA", "V", "AXP", "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "TROW", "UPS", "FDX", "UNP", "HON", "GE", "MMM", "CAT", "DE", "EMR", "ETN", "PH", "ITW", "NSC", "CSX", "WM", "RSG", "AMT", "PLD", "CCI", "EQIX", "DLR", "PSA", "O", "VICI", "SBAC", "WELL", "AVB", "EQR", "VTR", "BXP", "ARE", "MAA", "T", "VZ", "TMUS", "CMCSA", "CHTR", "DIS", "WBD", "PARA", "FOXA", "LYV", "MAR", "HLT", "RCL", "CCL", "NCLH", "MGM", "WYNN", "LVS", "DRI", "SBUX", "YUM", "MCD", "CMG", "LEN", "DHI", "PHM", "NVR", "TOL", "HD", "LOW", "TGT", "TJX", "ROST", "DLTR", "DG", "AZO", "ORLY", "GPC", "TSCO", "ULTA", "BBY", "EBAY", "ETSY", "MELI", "SE", "CPNG", "BABA", "JD", "PDD", "BIDU", "NTES", "NIU", "XPEV", "LI", "NIO", "BYDDY"]
-
-FULL_TICKER_LIST = list(set([t for sublist in SECTOR_MAP.values() for t in sublist] + EXTRA_TICKERS))
+# Fill to 500+ with S&P components
+EXTRA = ["MA", "V", "AXP", "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "TROW", "UPS", "FDX", "UNP", "HON", "GE", "MMM", "EMR", "ETN", "PH", "ITW", "NSC", "CSX", "WM", "RSG", "AMT", "PLD", "CCI", "EQIX", "DLR", "PSA", "O", "VICI", "SBAC", "WELL", "AVB", "EQR", "VTR", "BXP", "ARE", "MAA", "T", "VZ", "TMUS", "CMCSA", "CHTR", "DIS", "WBD", "PARA", "FOXA", "LYV", "MAR", "HLT", "RCL", "CCL", "NCLH", "MGM", "WYNN", "LVS", "DRI", "SBUX", "YUM", "MCD", "CMG", "LEN", "DHI", "PHM", "NVR", "TOL", "TJX", "ROST", "DLTR", "DG", "AZO", "ORLY", "GPC", "TSCO", "ULTA", "BBY", "EBAY", "ETSY", "MELI", "SE", "CPNG", "BABA", "JD", "PDD", "BIDU", "NTES", "NIU", "XPEV", "LI", "NIO", "BYDDY"]
+FULL_TICKER_LIST = sorted(list(set([t for sub in SECTOR_MAP.values() for t in sub] + EXTRA)))
 
 # ===========================================================================
-# 2. LOGIC FUNCTIONS
+# HELPERS
 # ===========================================================================
 
 def fetch_news(ticker: str) -> List[Dict]:
@@ -42,19 +42,17 @@ def fetch_news(ticker: str) -> List[Dict]:
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0.0.0 Safari/537.36"}
     try:
         url = f"https://news.google.com/rss/search?q={ticker}+stock+when:7d&hl=en-US&gl=US&ceid=US:en"
-        response = requests.get(url, headers=headers, timeout=3)
+        response = requests.get(url, headers=headers, timeout=2)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             for item in root.findall('./channel/item')[:3]:
                 title = item.find('title').text
-                link = item.find('link').text
-                desc_html = item.find('description').text if item.find('description') is not None else ""
-                soup = BeautifulSoup(desc_html, "html.parser")
-                summary = soup.get_text()[:160]
+                soup = BeautifulSoup(item.find('description').text or "", "html.parser")
+                summary = soup.get_text()[:150]
                 blob = TextBlob(title)
                 score = blob.sentiment.polarity
                 articles.append({
-                    "headline": title, "link": link, "score": round(score, 2),
+                    "headline": title, "link": item.find('link').text, "score": round(score, 2),
                     "label": "Bullish" if score > 0.05 else "Bearish" if score < -0.05 else "Neutral",
                     "reason": summary if len(summary) > 10 else "Market tracking updates."
                 })
@@ -65,19 +63,13 @@ def generate_ai_report(ticker: str, data: dict, news: list, api_key: str) -> str
     if not api_key: return "API Key Required"
     client = OpenAI(api_key=api_key)
     news_txt = "\n".join([f"- {n['headline']}: {n['reason']}" for n in news[:5]])
-    prompt = f"""
-    Institutional Analysis: {ticker}. 
-    Price: ${data.get('Price')} | Fair Value: ${data.get('intrinsic_value')}
-    News: {news_txt}
-    Structure: Numbers, Forecast, News Cycle, Geopolitics, Risks, Verdict.
-    Tone: Professional Apple-style memo.
-    """
+    prompt = f"Analyst Memo for {ticker}. Price: ${data['Price']}. Fair Value: ${data['intrinsic_value']}. News: {news_txt}. Structure: Numbers, Forecast, News Cycle, Geopolitics, Risks, Verdict. Apple-style clean formatting."
     try:
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         return response.choices[0].message.content
     except Exception as e: return str(e)
 
-def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
+def calc_dcf(stock: yf.Ticker, info: dict) -> Dict:
     res = {"intrinsic_value": 0.0, "margin_of_safety": 0.0, "growth_rate": 0.0}
     try:
         fcf = info.get("freeCashflow")
@@ -103,71 +95,52 @@ def calc_dcf(stock: yf.Ticker, info: dict, sector: str) -> Dict:
     except: pass
     return res
 
-# ===========================================================================
-# 3. HIGH SPEED MULTI-THREADED ENGINE
-# ===========================================================================
 class InvestmentEngine:
-    def __init__(self):
-        self.tickers = FULL_TICKER_LIST
-
     def process_ticker(self, t):
         try:
             stock = yf.Ticker(t)
-            # Fetch minimal data to increase speed
             info = stock.info
             price = info.get("currentPrice") or info.get("regularMarketPrice")
             if not price: return None
-            
             sector = "General"
             for s_name, t_list in SECTOR_MAP.items():
                 if t in t_list: sector = s_name
-            
-            dcf = calc_dcf(stock, info, sector)
+            dcf = calc_dcf(stock, info)
             news = fetch_news(t)
-            avg_sent = np.mean([n['score'] for n in news]) if news else 0
-            
-            score = 50 + (dcf['margin_of_safety'] / 3) + (avg_sent * 10)
-            score = max(0, min(100, int(score)))
-            
-            # Simple vol check
-            hist = stock.history(period="1mo")
-            vol = hist['Close'].pct_change().std() * 100 if not hist.empty else 0
-            
+            score = max(0, min(100, int(50 + (dcf['margin_of_safety'] / 3))))
             return {
                 "Ticker": t, "Sector": sector, "Price": round(price, 2),
                 "intrinsic_value": dcf["intrinsic_value"],
                 "margin_of_safety": dcf["margin_of_safety"],
                 "growth_rate": dcf["growth_rate"],
                 "Oracle_Score": score,
-                "Sentiment": round(avg_sent, 2),
-                "risk_level": "High" if vol > 3.0 else "Medium" if vol > 1.5 else "Low",
-                "Articles_JSON": json.dumps(news)
+                "risk_level": "Medium",
+                "Articles_JSON": json.dumps(news),
+                "Last_Update": datetime.now().strftime("%Y-%m-%d")
             }
         except: return None
 
     def load_data(self):
-        if os.path.exists(CACHE_FILE): 
-            try: return pd.read_csv(CACHE_FILE), True
-            except: pass
-        return pd.DataFrame(), False
+        if os.path.exists(CACHE_FILE):
+            try: return pd.read_csv(CACHE_FILE)
+            except: return pd.DataFrame()
+        return pd.DataFrame()
 
-    def fetch_market_data(self, progress_bar=None):
-        results = []
-        ticker_count = len(self.tickers)
+    def run_batch(self, batch_size=10):
+        """Scans a small batch and saves it so the UI doesn't hang."""
+        existing_df = self.load_data()
+        scanned_tickers = existing_df['Ticker'].tolist() if not existing_df.empty else []
         
-        # Parallel execution with 25 workers (Maximum stable speed)
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            for i, result in enumerate(executor.map(self.process_ticker, self.tickers)):
-                if result: results.append(result)
-                
-                # Update UI periodically so it doesn't time out
-                if progress_bar and i % 5 == 0:
-                    progress_bar.progress((i+1)/ticker_count, text=f"Processing {i+1}/{ticker_count} assets...")
-                
-                # INTERMEDIATE SAVE: If we have 20 new items, save them to CSV immediately
-                if len(results) > 0 and len(results) % 20 == 0:
-                    pd.DataFrame(results).to_csv(CACHE_FILE, index=False)
+        remaining = [t for t in FULL_TICKER_LIST if t not in scanned_tickers]
+        if not remaining: return existing_df, False # Done
+
+        to_scan = remaining[:batch_size]
+        new_results = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for res in executor.map(self.process_ticker, to_scan):
+                if res: new_results.append(res)
         
-        df = pd.DataFrame(results)
-        if not df.empty: df.to_csv(CACHE_FILE, index=False)
-        return df
+        new_df = pd.DataFrame(new_results)
+        final_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['Ticker'])
+        final_df.to_csv(CACHE_FILE, index=False)
+        return final_df, True # More to do
