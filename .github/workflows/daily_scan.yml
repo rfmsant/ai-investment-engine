@@ -1,0 +1,34 @@
+name: Institutional Market Scan
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Runs every hour
+  workflow_dispatch: # Allows you to start it manually from GitHub Actions tab
+
+jobs:
+  build:
+    runs-all: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Market Scan
+        run: python discord_bot.py # This will run the scan and alert Discord
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Commit Results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add market_cache.csv
+          git commit -m "Update Market Cache [skip ci]" || exit 0
+          git push
