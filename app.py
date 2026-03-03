@@ -1015,33 +1015,29 @@ if not fdf.empty:
 
                     # ── Try DCF calculation ───────────────────────────────
                     logs.append("")
-                    logs.append("── DCF Calculation ──")
+                    logs.append("── DCF Calculation (info-based) ──")
                     try:
-                        from logic import ValuationEngine as _VE, _extract_fcf
-                        fcf = _extract_fcf(stock, debug_ticker=ticker_clean)
-                        if fcf is not None:
-                            logs.append(f"✅ FCF extracted: {fcf.tolist()}")
-                            dcf_result = _VE.calculate(ticker_clean)
-                            logs.append(f"✅ Intrinsic value: ${dcf_result['intrinsic_value']:.2f}")
-                            logs.append(f"   Margin of safety: {dcf_result['margin_of_safety']:.1f}%")
-                            logs.append(f"   Confidence: {dcf_result['dcf_confidence']}")
-                            logs.append(f"   Growth rate: {dcf_result['growth_rate']:.1f}%")
-                            logs.append(f"   Method: {dcf_result['dcf_method']}")
-                            results["dcf"] = dcf_result
-                        else:
-                            logs.append("❌ FCF extraction returned None")
-                            logs.append("   → DCF will show 0 for this ticker")
+                        from logic import calc_dcf as _calc_dcf
+                        dcf_keys = ["freeCashflow","operatingCashflow","trailingEps",
+                                    "revenueGrowth","earningsGrowth",
+                                    "sharesOutstanding","totalDebt","totalCash"]
+                        for k in dcf_keys:
+                            logs.append(f"   info[{k!r}] = {info.get(k)}")
+                        logs.append("")
+                        dcf_result = _calc_dcf(info, sector="Technology")
+                        iv = dcf_result["intrinsic_value"]
+                        logs.append(f"{'OK' if iv > 0 else 'FAIL'} IV=${iv:.2f}  MoS={dcf_result['margin_of_safety']:.1f}%  method={dcf_result['dcf_method']}")
+                        results["dcf"] = dcf_result
                     except Exception as e:
-                        logs.append(f"❌ DCF error: {e}")
+                        logs.append(f"ERROR DCF: {e}")
                         logs.append(_tb.format_exc())
 
                     # ── News test ─────────────────────────────────────────
                     logs.append("")
                     logs.append("── News Fetch ──")
                     try:
-                        from logic import NewsFetcher as _NF, LLMAnalyst as _LA
-                        nf = _NF(_LA(mock_mode=True))
-                        arts = nf.fetch(ticker_clean, max_items=3)
+                        from logic import fetch_news as _fn
+                        arts = _fn(ticker_clean, max_items=3)
                         if arts and arts[0]["headline"] != "No recent news available":
                             logs.append(f"✅ {len(arts)} articles fetched")
                             for a in arts:
