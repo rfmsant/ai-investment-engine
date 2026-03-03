@@ -512,7 +512,7 @@ if not fdf.empty:
                 tickvals=[0, 25, 50, 75, 100],
                 ticktext=["0 (Poor)", "25", "50", "75", "100 (Best)"],
                 tickfont=dict(color="#71717a"),
-                titlefont=dict(color="#a1a1aa"),
+                title_font=dict(color="#a1a1aa"),
             ))
             st.plotly_chart(fig_heat, use_container_width=True)
 
